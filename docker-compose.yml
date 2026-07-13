@@ -1,0 +1,6 @@
+services:
+  sony-allocation-demo:
+    build: .
+    ports:
+      - "8080:80"
+    restart: unless-stopped
