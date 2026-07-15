@@ -15,6 +15,7 @@ import {
 import { DemoProvider, useDemo, type DemoView } from "@/src/store/DemoContext";
 import { formatSimulationDate } from "@/src/mock/seed";
 import { SCENARIOS } from "@/src/core/scenarios";
+import { runtimeModeFromSearch } from "@/src/core/demoClock";
 import type { AllocationScenarioId } from "@/src/core/types";
 import { WorkbenchPage } from "@/src/components/pages/WorkbenchPage";
 import { ScenariosPage } from "@/src/components/pages/ScenariosPage";
@@ -62,18 +63,25 @@ function Shell() {
     runDay,
     fastForwardMonday,
     resetDemo,
+    runtimeMode,
+    configureRuntimeMode,
     applyShotPreset,
     toast,
   } = useDemo();
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
-    if (params.get("shot") !== "1") return;
-    document.documentElement.classList.add("shot-mode");
+    const mode = runtimeModeFromSearch(window.location.search);
+    configureRuntimeMode(mode);
+    document.documentElement.classList.toggle("shot-mode", mode === "shot");
+    if (mode !== "shot") {
+      delete document.documentElement.dataset.preset;
+      return;
+    }
     const preset = params.get("preset") || "workbench-result";
     document.documentElement.dataset.preset = preset;
     applyShotPreset(preset);
-  }, [applyShotPreset]);
+  }, [applyShotPreset, configureRuntimeMode]);
 
   const navigate = (next: DemoView) => {
     const transitionDocument = document as Document & {
@@ -89,7 +97,7 @@ function Shell() {
   const monday = simulationDate.getDay() === 1;
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-runtime-mode={runtimeMode}>
       <aside className="sidebar">
         <div className="sidebar-brand">
           <img src="/logo.png" alt="4seeTech" />
@@ -118,7 +126,13 @@ function Shell() {
         <div className="sidebar-meta">
           <span>演示环境</span>
           <strong>数据快照 09:00</strong>
-          <small>静态数据 · 可复现运行</small>
+          <small>
+            {runtimeMode === "presentation"
+              ? "演示模式 · 超时受控"
+              : runtimeMode === "shot"
+                ? "截图模式 · 固定时钟"
+                : "静态数据 · 自动超时"}
+          </small>
         </div>
       </aside>
 

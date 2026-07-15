@@ -4,6 +4,7 @@ import {
   createContext,
   useCallback,
   useContext,
+  useEffect,
   useMemo,
   useRef,
   useState,
@@ -24,6 +25,14 @@ import {
   createLockOrder,
   transitionLock,
 } from "@/src/core/lockStateMachine";
+import {
+  LIVE_SOFT_LOCK_TTL_MS,
+  SHOT_SOFT_LOCK_TTL_MS,
+  clockStartForMode,
+  shouldAutoTimeout,
+  softLockTtlForMode,
+  type DemoRuntimeMode,
+} from "@/src/core/demoClock";
 import type {
   AllocationParams,
   AllocationPlanComparison,
@@ -95,6 +104,9 @@ interface DemoContextValue {
   history: typeof DASHBOARD_HISTORY;
   factorOverrides: FactorOverrides;
   inventoryFactor: number;
+  runtimeMode: DemoRuntimeMode;
+  clockNow: number;
+  autoTimeoutEnabled: boolean;
   shotMode: boolean;
   shotPreset: string;
   toast: ToastMessage | null;
@@ -116,18 +128,36 @@ interface DemoContextValue {
   setFactorOverride: (key: keyof FactorOverrides, value: boolean) => void;
   updateInventoryFactor: (value: number) => void;
   rollbackWeights: () => void;
+  configureRuntimeMode: (mode: DemoRuntimeMode) => void;
   applyShotPreset: (preset: string) => void;
   notify: (title: string, detail: string) => void;
 }
 
 const DemoContext = createContext<DemoContextValue | null>(null);
 
+interface BuildLockOrderOptions {
+  seedStatuses: boolean;
+  ttlMs: number;
+  seededElapsedMs?: number;
+}
+
+function lockOrderOptions(
+  mode: DemoRuntimeMode,
+  seedStatuses: boolean,
+): BuildLockOrderOptions {
+  return {
+    seedStatuses,
+    ttlMs: softLockTtlForMode(mode),
+    seededElapsedMs: mode === "shot" ? 0 : 10_000,
+  };
+}
+
 function buildLockOrders(
   allocation: AllocationSummary,
   dealers: readonly Dealer[],
   sku: string,
   now: number,
-  seedStatuses: boolean,
+  options: BuildLockOrderOptions,
 ): LockOrder[] {
   const dealerMap = new Map(dealers.map((dealer) => [dealer.id, dealer]));
   const orders = allocation.results
@@ -139,31 +169,34 @@ function buildLockOrders(
         dealerName: dealerMap.get(result.dealerId)?.name ?? result.dealerId,
         sku,
         allocatedUnits: result.finalAlloc,
-        createdAt: now + index * 1_000,
+        createdAt: Math.max(0, now - 20_000 + index * 1_000),
       }),
     );
 
-  if (!seedStatuses || orders.length === 0) return orders;
+  if (!options.seedStatuses || orders.length === 0) return orders;
+
+  const elapsedMs = options.seededElapsedMs ?? 10_000;
+  const lockStartedAt = now - elapsedMs;
 
   return orders.map((order, index) => {
     if (index === 0) {
       return transitionLock(order, {
         type: "REQUEST_LOCK",
-        now: now + 10_000,
+        now: lockStartedAt,
         creditCapUnits: order.allocatedUnits,
-        ttlMs: 60_000,
+        ttlMs: options.ttlMs,
       }).order;
     }
     if (index === orders.length - 1 && orders.length > 2) {
       const locked = transitionLock(order, {
         type: "REQUEST_LOCK",
-        now: now + 8_000,
+        now: lockStartedAt - 2_000,
         creditCapUnits: order.allocatedUnits,
-        ttlMs: 60_000,
+        ttlMs: options.ttlMs,
       }).order;
       return transitionLock(locked, {
         type: "CONFIRM_PAYMENT",
-        now: now + 12_000,
+        now: lockStartedAt + 2_000,
       }).order;
     }
     return order;
@@ -253,6 +286,10 @@ export function DemoProvider({ children }: { children: ReactNode }) {
   const initialScenario = useMemo(() => getScenario("ppt"), []);
   const initialSku = useMemo(() => getScenarioSku("ppt"), []);
   const initialDate = useMemo(() => new Date(SIMULATION_START_DATE), []);
+  const initialClockNow = useMemo(
+    () => clockStartForMode(initialDate.getTime(), "normal"),
+    [initialDate],
+  );
 
   const [view, setView] = useState<DemoView>("workbench");
   const [scenarioId, setScenarioId] = useState<AllocationScenarioId>("ppt");
@@ -280,10 +317,14 @@ export function DemoProvider({ children }: { children: ReactNode }) {
     inventory: false,
   });
   const [inventoryFactor, setInventoryFactor] = useState(1);
+  const [runtimeMode, setRuntimeMode] = useState<DemoRuntimeMode>("normal");
+  const [clockNow, setClockNow] = useState(initialClockNow);
+  const [clockRevision, setClockRevision] = useState(0);
   const [shotMode, setShotMode] = useState(false);
   const [shotPreset, setShotPreset] = useState("");
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const runningRef = useRef(false);
+  const clockNowRef = useRef(initialClockNow);
 
   const allocation = useMemo(() => allocate(dealers, params), [dealers, params]);
   const activeSku = useMemo(
@@ -308,10 +349,45 @@ export function DemoProvider({ children }: { children: ReactNode }) {
       firstAllocation,
       initialSku.dealers,
       initialSku.name,
-      initialDate.getTime(),
-      true,
+      initialClockNow,
+      {
+        seedStatuses: true,
+        ttlMs: LIVE_SOFT_LOCK_TTL_MS,
+      },
     );
   });
+
+  const autoTimeoutEnabled = shouldAutoTimeout(runtimeMode);
+
+  useEffect(() => {
+    const base = clockStartForMode(simulationDate.getTime(), runtimeMode);
+    clockNowRef.current = base;
+    setClockNow(base);
+
+    if (runtimeMode === "shot") return;
+
+    const wallStartedAt = Date.now();
+    const updateClock = () => {
+      const next = base + Math.max(0, Date.now() - wallStartedAt);
+      clockNowRef.current = next;
+      setClockNow(next);
+    };
+    const interval = window.setInterval(updateClock, 1_000);
+    const syncWhenVisible = () => {
+      if (document.visibilityState === "visible") updateClock();
+    };
+    document.addEventListener("visibilitychange", syncWhenVisible);
+    return () => {
+      window.clearInterval(interval);
+      document.removeEventListener("visibilitychange", syncWhenVisible);
+    };
+  }, [clockRevision, runtimeMode, simulationDate]);
+
+  const configureRuntimeMode = useCallback((mode: DemoRuntimeMode) => {
+    setRuntimeMode(mode);
+    setShotMode(mode === "shot");
+    setClockRevision((current) => current + 1);
+  }, []);
 
   const notify = useCallback((title: string, detail: string) => {
     const message = { id: Date.now(), title, detail };
@@ -341,24 +417,34 @@ export function DemoProvider({ children }: { children: ReactNode }) {
     setSelectedPlan("balanced");
     setReleasedPool(0);
     const resetDate = new Date(SIMULATION_START_DATE);
+    const resetClockNow = clockStartForMode(resetDate.getTime(), runtimeMode);
     setSimulationDate(resetDate);
+    setClockRevision((current) => current + 1);
     const nextAllocation = allocate(nextSku.dealers, nextSku.params);
     setInventorySeeds(buildInventorySeedsForSku(nextSku, nextAllocation));
     setAlerts(buildAlertsForSku(nextSku));
-    setLockOrders(buildLockOrders(nextAllocation, nextSku.dealers, nextSku.name, resetDate.getTime(), true));
+    setLockOrders(buildLockOrders(
+      nextAllocation,
+      nextSku.dealers,
+      nextSku.name,
+      resetClockNow,
+      lockOrderOptions(runtimeMode, true),
+    ));
     setDayRunCount(0);
-  }, [sku]);
+  }, [runtimeMode, sku]);
 
   const selectSku = useCallback((nextSkuId: string) => {
     if (nextSkuId === sku) return;
     const nextSku = getScenarioSku(scenarioId, nextSkuId);
     const resetDate = new Date(SIMULATION_START_DATE);
+    const resetClockNow = clockStartForMode(resetDate.getTime(), runtimeMode);
     const nextAllocation = allocate(nextSku.dealers, nextSku.params);
     setSkuId(nextSku.id);
     setDealers(nextSku.dealers);
     setParams(nextSku.params);
     setSelectedPlan("balanced");
     setSimulationDate(resetDate);
+    setClockRevision((current) => current + 1);
     setDayRunCount(0);
     setReleasedPool(0);
     setInventoryFactor(1);
@@ -371,12 +457,18 @@ export function DemoProvider({ children }: { children: ReactNode }) {
       fulfillment: false,
       inventory: false,
     });
-    setLockOrders(buildLockOrders(nextAllocation, nextSku.dealers, nextSku.name, resetDate.getTime(), true));
+    setLockOrders(buildLockOrders(
+      nextAllocation,
+      nextSku.dealers,
+      nextSku.name,
+      resetClockNow,
+      lockOrderOptions(runtimeMode, true),
+    ));
     notify(
       "SKU 数据集已切换",
       `${nextSku.name}：${nextSku.dealers.length} 家渠道、可分 ${nextSku.params.supply} 台，全部指标已按独立快照重算。`,
     );
-  }, [notify, scenarioId, sku]);
+  }, [notify, runtimeMode, scenarioId, sku]);
 
   const updateParams = useCallback((patch: Partial<AllocationParams>) => {
     setParams((current) => {
@@ -440,22 +532,27 @@ export function DemoProvider({ children }: { children: ReactNode }) {
           plan.allocation,
           dealers,
           activeSku.name,
-          simulationDate.getTime() + dayRunCount * 20_000,
-          false,
+          clockNowRef.current,
+          lockOrderOptions(runtimeMode, false),
         ),
       );
       setView("workbench");
       notify("方案已采用", `${plan.name} 已同步到分货沙盘；确认后可模拟回写锁单。`);
     },
-    [activeSku.name, dayRunCount, dealers, notify, plans, simulationDate],
+    [activeSku.name, dealers, notify, plans, runtimeMode],
   );
 
   const writeBackSap = useCallback(() => {
-    const now = simulationDate.getTime() + dayRunCount * 20_000;
-    setLockOrders(buildLockOrders(allocation, dealers, activeSku.name, now, false));
+    setLockOrders(buildLockOrders(
+      allocation,
+      dealers,
+      activeSku.name,
+      clockNowRef.current,
+      lockOrderOptions(runtimeMode, false),
+    ));
     setView("locking");
     notify("模拟回写成功", "已模拟调用产品分配 RFC，分配结果已进入待锁单队列。 ");
-  }, [activeSku.name, allocation, dayRunCount, dealers, notify, simulationDate]);
+  }, [activeSku.name, allocation, dealers, notify, runtimeMode]);
 
   const applyLockTransition = useCallback(
     (orderId: string, type: "request" | "confirm" | "waive" | "timeout") => {
@@ -463,7 +560,7 @@ export function DemoProvider({ children }: { children: ReactNode }) {
       let transitionMessage = "";
       const next = lockOrders.map((order) => {
         if (order.id !== orderId) return order;
-        const now = simulationDate.getTime() + order.auditTrail.length * 1_000;
+        const now = clockNowRef.current;
         let result;
         if (type === "request") {
           const realtimeCredit =
@@ -476,7 +573,7 @@ export function DemoProvider({ children }: { children: ReactNode }) {
             type: "REQUEST_LOCK",
             now,
             creditCapUnits: realtimeCredit,
-            ttlMs: 60_000,
+            ttlMs: softLockTtlForMode(runtimeMode),
           });
         } else if (type === "confirm") {
           result = transitionLock(order, { type: "CONFIRM_PAYMENT", now });
@@ -496,7 +593,7 @@ export function DemoProvider({ children }: { children: ReactNode }) {
       if (released > 0) setReleasedPool((pool) => pool + released);
       if (transitionMessage) notify("锁单状态已更新", transitionMessage);
     },
-    [lockOrders, notify, simulationDate],
+    [lockOrders, notify, runtimeMode],
   );
 
   const requestOrderLock = useCallback(
@@ -516,6 +613,52 @@ export function DemoProvider({ children }: { children: ReactNode }) {
     [applyLockTransition],
   );
 
+  useEffect(() => {
+    if (!autoTimeoutEnabled) return;
+    const expiredIds = new Set(
+      lockOrders
+        .filter(
+          (order) =>
+            order.status === "SOFT_LOCKED" &&
+            order.softLockExpiresAt !== undefined &&
+            clockNow >= order.softLockExpiresAt,
+        )
+        .map((order) => order.id),
+    );
+    if (expiredIds.size === 0) return;
+
+    let released = 0;
+    let expiredCount = 0;
+    const next = lockOrders.map((order) => {
+      if (!expiredIds.has(order.id)) return order;
+      const result = transitionLock(order, { type: "TICK", now: clockNow });
+      if (result.accepted) {
+        released += result.releasedToSupply;
+        expiredCount += 1;
+      }
+      return result.order;
+    });
+
+    setLockOrders(next);
+    if (released > 0) {
+      setReleasedPool((pool) => pool + released);
+      setAlerts((current) => [
+        {
+          id: `auto-timeout-${clockNow}`,
+          level: "warning" as const,
+          time: timeLabel(new Date(clockNow)),
+          title: `软锁自动超时释放 ${released} 台`,
+          detail: `${expiredCount} 张订单已按真实倒计时回流，状态机幂等校验通过。`,
+        },
+        ...current,
+      ].slice(0, 6));
+      notify(
+        "软锁已自动超时",
+        `${expiredCount} 张订单共 ${released} 台已释放回流。`,
+      );
+    }
+  }, [autoTimeoutEnabled, clockNow, lockOrders, notify]);
+
   const runDay = useCallback(async () => {
     if (runningRef.current) return;
     runningRef.current = true;
@@ -526,13 +669,14 @@ export function DemoProvider({ children }: { children: ReactNode }) {
       }
       const nextDate = new Date(simulationDate);
       nextDate.setDate(nextDate.getDate() + 1);
+      const nextClockNow = clockStartForMode(nextDate.getTime(), runtimeMode);
 
       let dayReleased = 0;
       const advancedOrders = lockOrders.map((order) => {
         if (order.status !== "SOFT_LOCKED") return order;
         const result = transitionLock(order, {
           type: "TICK",
-          now: nextDate.getTime(),
+          now: nextClockNow,
         });
         dayReleased += result.releasedToSupply;
         return result.order;
@@ -543,6 +687,7 @@ export function DemoProvider({ children }: { children: ReactNode }) {
       setLockOrders(advancedOrders);
       if (dayReleased > 0) setReleasedPool((pool) => pool + dayReleased);
       setSimulationDate(nextDate);
+      setClockRevision((current) => current + 1);
       setDayRunCount((count) => count + 1);
       setInventorySeeds((current) => {
         const inboundByDealer = new Map(
@@ -594,13 +739,14 @@ export function DemoProvider({ children }: { children: ReactNode }) {
       setRunningStage(null);
       runningRef.current = false;
     }
-  }, [allocation, lockOrders, notify, simulationDate]);
+  }, [allocation, lockOrders, notify, runtimeMode, simulationDate]);
 
   const fastForwardMonday = useCallback(() => {
     const next = new Date(simulationDate);
     const distance = ((8 - next.getDay()) % 7) || 7;
     next.setDate(next.getDate() + distance);
     setSimulationDate(next);
+    setClockRevision((current) => current + 1);
     setCalibrationOpen(true);
     notify("已到周一真值日", "库存真值快照到达，正在对比估算偏差并准备周初自校准。 ");
   }, [notify, simulationDate]);
@@ -736,7 +882,9 @@ export function DemoProvider({ children }: { children: ReactNode }) {
     const reset = getScenario("ppt");
     const resetSku = getScenarioSku("ppt", reset.sku);
     const date = new Date(SIMULATION_START_DATE);
+    const shotClockNow = clockStartForMode(date.getTime(), "shot");
     const resetAllocation = allocate(resetSku.dealers, resetSku.params);
+    setRuntimeMode("shot");
     setShotMode(true);
     setShotPreset(preset);
     setScenarioId("ppt");
@@ -746,6 +894,7 @@ export function DemoProvider({ children }: { children: ReactNode }) {
     setParams(resetSku.params);
     setSelectedPlan("balanced");
     setSimulationDate(date);
+    setClockRevision((current) => current + 1);
     setReleasedPool(0);
     setInventorySeeds(buildInventorySeedsForSku(resetSku, resetAllocation));
     setAlerts(buildAlertsForSku(resetSku));
@@ -760,7 +909,13 @@ export function DemoProvider({ children }: { children: ReactNode }) {
 
     if (preset === "scenarios") {
       setView("scenarios");
-      setLockOrders(buildLockOrders(resetAllocation, resetSku.dealers, resetSku.name, date.getTime(), true));
+      setLockOrders(buildLockOrders(
+        resetAllocation,
+        resetSku.dealers,
+        resetSku.name,
+        shotClockNow,
+        lockOrderOptions("shot", true),
+      ));
       return;
     }
 
@@ -769,23 +924,23 @@ export function DemoProvider({ children }: { children: ReactNode }) {
         resetAllocation,
         resetSku.dealers,
         resetSku.name,
-        date.getTime(),
-        false,
+        shotClockNow,
+        lockOrderOptions("shot", false),
       ).map((order) => {
         if (order.dealerId === "A") {
           return transitionLock(order, {
             type: "REQUEST_LOCK",
-            now: date.getTime() + 10_000,
+            now: shotClockNow,
             creditCapUnits: order.allocatedUnits,
-            ttlMs: 60_000,
+            ttlMs: SHOT_SOFT_LOCK_TTL_MS,
           }).order;
         }
         if (order.dealerId === "B") {
           const partial = transitionLock(order, {
             type: "REQUEST_LOCK",
-            now: date.getTime() + 8_000,
+            now: shotClockNow - 2_000,
             creditCapUnits: 32,
-            ttlMs: 60_000,
+            ttlMs: SHOT_SOFT_LOCK_TTL_MS,
           }).order;
           return transitionLock(partial, {
             type: "TICK",
@@ -794,13 +949,13 @@ export function DemoProvider({ children }: { children: ReactNode }) {
         }
         const locked = transitionLock(order, {
           type: "REQUEST_LOCK",
-          now: date.getTime() + 8_000,
+          now: shotClockNow - 4_000,
           creditCapUnits: order.allocatedUnits,
-          ttlMs: 60_000,
+          ttlMs: SHOT_SOFT_LOCK_TTL_MS,
         }).order;
         return transitionLock(locked, {
           type: "CONFIRM_PAYMENT",
-          now: date.getTime() + 12_000,
+          now: shotClockNow - 1_000,
         }).order;
       });
       setLockOrders(orders);
@@ -812,18 +967,31 @@ export function DemoProvider({ children }: { children: ReactNode }) {
     if (preset === "turnover-band" || preset === "calibration") {
       setView("turnover");
       setCalibrationOpen(preset === "calibration");
-      setLockOrders(buildLockOrders(resetAllocation, resetSku.dealers, resetSku.name, date.getTime(), true));
+      setLockOrders(buildLockOrders(
+        resetAllocation,
+        resetSku.dealers,
+        resetSku.name,
+        shotClockNow,
+        lockOrderOptions("shot", true),
+      ));
       return;
     }
 
     setView("workbench");
-    setLockOrders(buildLockOrders(resetAllocation, resetSku.dealers, resetSku.name, date.getTime(), true));
+    setLockOrders(buildLockOrders(
+      resetAllocation,
+      resetSku.dealers,
+      resetSku.name,
+      shotClockNow,
+      lockOrderOptions("shot", true),
+    ));
   }, []);
 
   const resetDemo = useCallback(() => {
     const reset = getScenario("ppt");
     const resetSku = getScenarioSku("ppt", reset.sku);
     const date = new Date(SIMULATION_START_DATE);
+    const resetClockNow = clockStartForMode(date.getTime(), runtimeMode);
     const resetAllocation = allocate(resetSku.dealers, resetSku.params);
     setView("workbench");
     setScenarioId("ppt");
@@ -833,6 +1001,7 @@ export function DemoProvider({ children }: { children: ReactNode }) {
     setParams(resetSku.params);
     setSelectedPlan("balanced");
     setSimulationDate(date);
+    setClockRevision((current) => current + 1);
     setRunningStage(null);
     setDayRunCount(0);
     setReleasedPool(0);
@@ -841,7 +1010,7 @@ export function DemoProvider({ children }: { children: ReactNode }) {
     setAlerts(buildAlertsForSku(resetSku));
     setHistory(DASHBOARD_HISTORY);
     setInventoryFactor(1);
-    setShotMode(false);
+    setShotMode(runtimeMode === "shot");
     setShotPreset("");
     setFactorOverrides({
       season: false,
@@ -850,9 +1019,15 @@ export function DemoProvider({ children }: { children: ReactNode }) {
       fulfillment: false,
       inventory: false,
     });
-    setLockOrders(buildLockOrders(resetAllocation, resetSku.dealers, resetSku.name, date.getTime(), true));
+    setLockOrders(buildLockOrders(
+      resetAllocation,
+      resetSku.dealers,
+      resetSku.name,
+      resetClockNow,
+      lockOrderOptions(runtimeMode, true),
+    ));
     notify("演示已重置", "已恢复 PPT 示意场景、固定 seed、模拟时钟与全部状态。 ");
-  }, [notify]);
+  }, [notify, runtimeMode]);
 
   const value: DemoContextValue = {
     view,
@@ -880,6 +1055,9 @@ export function DemoProvider({ children }: { children: ReactNode }) {
     history,
     factorOverrides,
     inventoryFactor,
+    runtimeMode,
+    clockNow,
+    autoTimeoutEnabled,
     shotMode,
     shotPreset,
     toast,
@@ -901,6 +1079,7 @@ export function DemoProvider({ children }: { children: ReactNode }) {
     setFactorOverride,
     updateInventoryFactor,
     rollbackWeights,
+    configureRuntimeMode,
     applyShotPreset,
     notify,
   };

@@ -190,6 +190,14 @@ export function WorkbenchPage() {
     return () => window.clearTimeout(timer);
   }, [playbackIndex, playing, replayEvents.length, speed]);
 
+  useEffect(() => {
+    const pauseWhenHidden = () => {
+      if (document.visibilityState === "hidden") setPlaying(false);
+    };
+    document.addEventListener("visibilitychange", pauseWhenHidden);
+    return () => document.removeEventListener("visibilitychange", pauseWhenHidden);
+  }, []);
+
   const complete = playbackIndex >= replayEvents.length;
   const frame = useMemo(() => {
     const fair = new Map<string, number>();

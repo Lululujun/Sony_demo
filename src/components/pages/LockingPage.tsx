@@ -15,6 +15,7 @@ import {
   WalletCards,
 } from "lucide-react";
 import type { LockOrder, LockStatus } from "@/src/core/types";
+import { countdownState } from "@/src/core/demoClock";
 import { SKU_CATALOG } from "@/src/mock/seed";
 import { useDemo } from "@/src/store/DemoContext";
 import { CardTitle, PageHeading, StatusPill } from "@/src/components/ui/Primitives";
@@ -43,6 +44,8 @@ export function LockingPage() {
   const {
     lockOrders,
     releasedPool,
+    clockNow,
+    autoTimeoutEnabled,
     requestOrderLock,
     confirmOrder,
     waiveOrder,
@@ -102,6 +105,8 @@ export function LockingPage() {
                     <LockCard
                       key={order.id}
                       order={order}
+                      now={clockNow}
+                      autoTimeoutEnabled={autoTimeoutEnabled}
                       shaking={shakingId === order.id}
                       onRequest={() => {
                         if (order.dealerId === "B" || order.dealerId === "F") {
@@ -169,6 +174,8 @@ function StepNode({ label, count, active, tone = "stone" }: { label: string; cou
 
 function LockCard({
   order,
+  now,
+  autoTimeoutEnabled,
   shaking,
   onRequest,
   onConfirm,
@@ -176,6 +183,8 @@ function LockCard({
   onTimeout,
 }: {
   order: LockOrder;
+  now: number;
+  autoTimeoutEnabled: boolean;
   shaking: boolean;
   onRequest: () => void;
   onConfirm: () => void;
@@ -184,6 +193,16 @@ function LockCard({
 }) {
   const price = SKU_CATALOG.find((item) => item.name === order.sku || item.id === order.sku)?.unitPrice ?? 3_499;
   const soft = order.status === "SOFT_LOCKED";
+  const lockStartedAt = order.auditTrail.findLast(
+    (entry) => entry.event === "REQUEST_LOCK" && entry.to === "SOFT_LOCKED",
+  )?.at;
+  const countdown = soft && order.softLockExpiresAt !== undefined
+    ? countdownState(
+        lockStartedAt ?? order.softLockExpiresAt - 1,
+        order.softLockExpiresAt,
+        now,
+      )
+    : null;
   return (
     <article className={`lock-card ${soft ? "soft" : ""} ${order.status === "CONFIRMED" ? "paid" : ""} ${shaking ? "shake" : ""}`} data-testid={`order-${order.dealerId}`}>
       <div className="lock-card-head"><strong>{order.dealerName}</strong>{statusPill(order)}</div>
@@ -193,10 +212,17 @@ function LockCard({
         <div><span>金额</span><strong>¥{formatMoney((order.lockedUnits || order.allocatedUnits) * price)}</strong></div>
       </div>
       {order.releasedUnits > 0 && <div className="released-note">已释放 {order.releasedUnits} 台至回流池</div>}
-      {soft && (
-        <div className="lock-countdown">
-          <div><span>支付倒计时</span><strong>00:46</strong></div>
-          <span><i /></span>
+      {countdown && (
+        <div
+          className="lock-countdown"
+          data-auto-timeout={autoTimeoutEnabled ? "on" : "off"}
+          title={autoTimeoutEnabled ? "归零后自动释放回流" : "演示模式下由“模拟超时”按钮受控触发"}
+        >
+          <div>
+            <span>支付倒计时</span>
+            <strong data-testid={`countdown-${order.dealerId}`}>{countdown.label}</strong>
+          </div>
+          <span><i style={{ width: `${countdown.progressPct}%` }} /></span>
         </div>
       )}
       <div className="lock-actions">

@@ -63,7 +63,8 @@ body {
   min-width: 1180px;
   height: 100%;
   margin: 0;
-  overflow: hidden;
+  overflow-x: auto;
+  overflow-y: hidden;
   background: var(--stone-50);
   color: var(--stone-900);
   font-family: var(--font-sans);
@@ -91,7 +92,7 @@ button:focus-visible, input:focus-visible, select:focus-visible {
   background-size: 24px 24px;
 }
 
-.app-shell { display: flex; width: 100vw; height: 100vh; overflow: hidden; }
+.app-shell { display: flex; width: 100%; min-width: 1180px; height: 100vh; overflow: hidden; }
 .sidebar {
   width: 224px;
   flex: 0 0 224px;
@@ -470,7 +471,7 @@ input[type="range"] { width: 100%; accent-color: var(--blue-700); }
 .lock-countdown > div { display: flex; justify-content: space-between; color: var(--stone-500); font-size: 0.75rem; }
 .lock-countdown strong { color: #b45309; font-family: var(--font-mono); }
 .lock-countdown > span { height: 4px; display: block; margin-top: 6px; overflow: hidden; border-radius: 999px; background: var(--stone-100); }
-.lock-countdown i { width: 76%; height: 100%; display: block; background: var(--amber-500); transition: width 1s linear; }
+.lock-countdown i { width: 0; height: 100%; display: block; background: var(--amber-500); transition: width 1s linear; }
 .lock-actions { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 12px; }
 .mini-button { height: 28px; padding: 0 8px; border: 1px solid var(--stone-200); color: var(--stone-600); background: #fff; font-size: 0.75rem; }
 .mini-button.primary { color: #fff; border-color: var(--blue-700); background: var(--blue-700); }
@@ -576,7 +577,7 @@ input[type="range"] { width: 100%; accent-color: var(--blue-700); }
 .spin { animation: spin 700ms linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 
-@media (max-width: 1500px) {
+@media (max-width: 1439px) {
   html { font-size: 100%; }
   .page { padding-left: 24px; padding-right: 24px; }
   .workbench-layout { grid-template-columns: 288px minmax(0, 1fr); gap: 16px; }

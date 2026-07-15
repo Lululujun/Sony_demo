@@ -45,6 +45,8 @@ pnpm dev
 - `/?shot=1&preset=turnover-band`
 - `/?shot=1&preset=calibration`
 
+现场演示建议使用 `/?demo=1`：倒计时按真实时间运行，但自动超时关闭，由“模拟超时”按钮受控触发。普通访问模式会在倒计时归零后自动释放；`shot=1` 使用固定时钟，保证截图结果可复现。
+
 ## 验证与静态交付
 
 ```powershell
