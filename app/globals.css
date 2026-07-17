@@ -286,7 +286,15 @@ button:focus-visible, input:focus-visible, select:focus-visible {
 .input-panel-head span { display: block; margin-top: 3px; color: var(--stone-500); font-size: 0.75rem; white-space: nowrap; }
 .input-collapsed .input-panel-head > div { display: none; }
 .input-collapsed .input-panel-head { justify-content: center; padding: 12px; border-bottom: 0; }
-.input-panel-body { max-height: calc(100vh - 205px); overflow-y: auto; padding: 16px; scrollbar-width: thin; }
+.input-panel-body {
+  max-height: calc(100vh - 205px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 16px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+.input-panel-body::-webkit-scrollbar { display: none; }
 .field-label { display: grid; gap: 7px; margin-bottom: 14px; color: var(--stone-600); font-size: 0.75rem; }
 .field-label select, .field-label input, .wide-number-input {
   width: 100%;
