@@ -1,4 +1,6 @@
 import type { InventoryConfidence, InventoryHealthTag } from "@/src/core/types";
+import type { TierNode } from "@/src/core/layering";
+import type { ColorVariant } from "@/src/core/specialMaterials";
 
 export interface SkuDefinition {
   id: string;
@@ -14,6 +16,121 @@ export const SKU_CATALOG: SkuDefinition[] = [
   { id: "K-65XR80", name: "BRAVIA 8 65\"", category: "OLED 电视", unitPrice: 19_999 },
   { id: "WF-LS910N", name: "LinkBuds Fit", category: "真无线耳机", unitPrice: 1_299 },
   { id: "SRS-ULT50", name: "ULT FIELD 5", category: "便携蓝牙音箱", unitPrice: 2_999 },
+  { id: "WF-C710N-LTD", name: "WF-C710N 限量色", category: "真无线耳机", unitPrice: 899 },
+];
+
+export interface PsiWeekSeed {
+  week: number;
+  sellout: number;
+  isPeakSeason: boolean;
+}
+
+export interface DealerBusinessProfile {
+  dealerId: string;
+  isBigCustomer: boolean;
+  monthlyTarget: number;
+  psiHistory12M: PsiWeekSeed[];
+  isDirectSales: boolean;
+  category: string;
+}
+
+function buildPsiHistory(base: number, phase: number): PsiWeekSeed[] {
+  return Array.from({ length: 52 }, (_, index) => {
+    const week = index + 1;
+    const isPeakSeason =
+      (week >= 20 && week <= 23) || (week >= 44 && week <= 48);
+    const cadence = ((week + phase) % 5) - 2;
+    const sellout = Math.max(
+      0,
+      Math.round(base + cadence + (isPeakSeason ? base * 0.58 : 0)),
+    );
+    return { week, sellout, isPeakSeason };
+  });
+}
+
+/**
+ * RFP business attributes are kept outside the allocation Dealer model so the
+ * original PPT white-box fixture remains unchanged.
+ */
+export const DEALER_BUSINESS_PROFILES: readonly DealerBusinessProfile[] = [
+  { dealerId: "A", isBigCustomer: true, monthlyTarget: 500, psiHistory12M: buildPsiHistory(15, 0), isDirectSales: true, category: "影音产品" },
+  { dealerId: "B", isBigCustomer: false, monthlyTarget: 300, psiHistory12M: buildPsiHistory(10, 1), isDirectSales: false, category: "影音产品" },
+  { dealerId: "C", isBigCustomer: false, monthlyTarget: 250, psiHistory12M: buildPsiHistory(9, 2), isDirectSales: false, category: "影音产品" },
+  { dealerId: "D", isBigCustomer: false, monthlyTarget: 220, psiHistory12M: buildPsiHistory(8, 3), isDirectSales: false, category: "数码影像" },
+  { dealerId: "E", isBigCustomer: true, monthlyTarget: 260, psiHistory12M: buildPsiHistory(8, 4), isDirectSales: false, category: "游戏产品" },
+  { dealerId: "F", isBigCustomer: false, monthlyTarget: 180, psiHistory12M: buildPsiHistory(6, 0), isDirectSales: false, category: "家庭娱乐" },
+];
+
+export const COLOR_VARIANTS: readonly ColorVariant[] = [
+  { materialCode: "P1", modelId: "WH-1000XM6", colorName: "曜石黑", target: 10, doLast3Months: 620 },
+  { materialCode: "P2", modelId: "WH-1000XM6", colorName: "铂金银", target: 10, doLast3Months: 410 },
+];
+
+export const SKIP_LIST: readonly string[] = ["WF-C710N-LTD"];
+
+/**
+ * Six-level organisation fixture:
+ * 1 HQ → 3 channels → 6 sub-channels → 8 regions → 12 branches → 20 dealers.
+ *
+ * P2 uses 310 units against the root's 500-unit net demand. The PA ratios
+ * split that pool into A/B/C = 124/109/77, so channel A can stop at 103.3%
+ * while B and C continue to lower tiers.
+ */
+export const ORG_TREE: readonly TierNode[] = [
+  { id: "HQ", name: "索尼中国总部", tier: "hq", parentId: null, targetDemand: 540, netDemand: 500, achievementRate: 0.83, paPlanRatio: 1 },
+  { id: "CH-A", name: "直营与核心零售", tier: "channel", parentId: "HQ", targetDemand: 130, netDemand: 120, achievementRate: 0.91, paPlanRatio: 0.4 },
+  { id: "CH-B", name: "区域经销", tier: "channel", parentId: "HQ", targetDemand: 195, netDemand: 180, achievementRate: 0.74, paPlanRatio: 0.35 },
+  { id: "CH-C", name: "电商与专业渠道", tier: "channel", parentId: "HQ", targetDemand: 215, netDemand: 200, achievementRate: 0.69, paPlanRatio: 0.25 },
+
+  { id: "SC-A1", name: "Sony Store", tier: "subChannel", parentId: "CH-A", targetDemand: 72, netDemand: 65, achievementRate: 0.94, paPlanRatio: 0.58 },
+  { id: "SC-A2", name: "全国 KA", tier: "subChannel", parentId: "CH-A", targetDemand: 58, netDemand: 55, achievementRate: 0.88, paPlanRatio: 0.42 },
+  { id: "SC-B1", name: "重点经销网络", tier: "subChannel", parentId: "CH-B", targetDemand: 98, netDemand: 90, achievementRate: 0.78, paPlanRatio: 0.55 },
+  { id: "SC-B2", name: "成长经销网络", tier: "subChannel", parentId: "CH-B", targetDemand: 97, netDemand: 90, achievementRate: 0.7, paPlanRatio: 0.45 },
+  { id: "SC-C1", name: "平台电商", tier: "subChannel", parentId: "CH-C", targetDemand: 115, netDemand: 105, achievementRate: 0.73, paPlanRatio: 0.52 },
+  { id: "SC-C2", name: "专业与垂直电商", tier: "subChannel", parentId: "CH-C", targetDemand: 100, netDemand: 95, achievementRate: 0.65, paPlanRatio: 0.48 },
+
+  { id: "RG-A1", name: "直营全国区", tier: "region", parentId: "SC-A1", targetDemand: 72, netDemand: 65, achievementRate: 0.94, paPlanRatio: 1 },
+  { id: "RG-A2", name: "KA 全国区", tier: "region", parentId: "SC-A2", targetDemand: 58, netDemand: 55, achievementRate: 0.88, paPlanRatio: 1 },
+  { id: "RG-B1", name: "华东华南区", tier: "region", parentId: "SC-B1", targetDemand: 98, netDemand: 90, achievementRate: 0.78, paPlanRatio: 1 },
+  { id: "RG-B2N", name: "华北区", tier: "region", parentId: "SC-B2", targetDemand: 51, netDemand: 47, achievementRate: 0.71, paPlanRatio: 0.55 },
+  { id: "RG-B2W", name: "西部区", tier: "region", parentId: "SC-B2", targetDemand: 46, netDemand: 43, achievementRate: 0.68, paPlanRatio: 0.45 },
+  { id: "RG-C1", name: "平台电商全国区", tier: "region", parentId: "SC-C1", targetDemand: 115, netDemand: 105, achievementRate: 0.73, paPlanRatio: 1 },
+  { id: "RG-C2E", name: "专业电商东区", tier: "region", parentId: "SC-C2", targetDemand: 53, netDemand: 50, achievementRate: 0.68, paPlanRatio: 0.54 },
+  { id: "RG-C2W", name: "专业电商西区", tier: "region", parentId: "SC-C2", targetDemand: 47, netDemand: 45, achievementRate: 0.61, paPlanRatio: 0.46 },
+
+  { id: "BR-A1", name: "直营运营中心", tier: "branch", parentId: "RG-A1", targetDemand: 72, netDemand: 65, achievementRate: 0.94, paPlanRatio: 1 },
+  { id: "BR-A2", name: "KA 运营中心", tier: "branch", parentId: "RG-A2", targetDemand: 58, netDemand: 55, achievementRate: 0.88, paPlanRatio: 1 },
+  { id: "BR-B1E", name: "华东分公司", tier: "branch", parentId: "RG-B1", targetDemand: 52, netDemand: 48, achievementRate: 0.81, paPlanRatio: 0.54 },
+  { id: "BR-B1S", name: "华南分公司", tier: "branch", parentId: "RG-B1", targetDemand: 46, netDemand: 42, achievementRate: 0.75, paPlanRatio: 0.46 },
+  { id: "BR-B2N", name: "华北分公司", tier: "branch", parentId: "RG-B2N", targetDemand: 51, netDemand: 47, achievementRate: 0.71, paPlanRatio: 1 },
+  { id: "BR-B2W", name: "西部分公司", tier: "branch", parentId: "RG-B2W", targetDemand: 46, netDemand: 43, achievementRate: 0.68, paPlanRatio: 1 },
+  { id: "BR-C1A", name: "综合电商一部", tier: "branch", parentId: "RG-C1", targetDemand: 62, netDemand: 57, achievementRate: 0.76, paPlanRatio: 0.55 },
+  { id: "BR-C1B", name: "综合电商二部", tier: "branch", parentId: "RG-C1", targetDemand: 53, netDemand: 48, achievementRate: 0.69, paPlanRatio: 0.45 },
+  { id: "BR-C2EA", name: "专业电商东一部", tier: "branch", parentId: "RG-C2E", targetDemand: 28, netDemand: 26, achievementRate: 0.7, paPlanRatio: 0.54 },
+  { id: "BR-C2EB", name: "专业电商东二部", tier: "branch", parentId: "RG-C2E", targetDemand: 25, netDemand: 24, achievementRate: 0.66, paPlanRatio: 0.46 },
+  { id: "BR-C2WA", name: "专业电商西一部", tier: "branch", parentId: "RG-C2W", targetDemand: 25, netDemand: 24, achievementRate: 0.63, paPlanRatio: 0.53 },
+  { id: "BR-C2WB", name: "专业电商西二部", tier: "branch", parentId: "RG-C2W", targetDemand: 22, netDemand: 21, achievementRate: 0.59, paPlanRatio: 0.47 },
+
+  { id: "DL-01", name: "Sony Store 上海", tier: "dealer", parentId: "BR-A1", targetDemand: 36, netDemand: 33, achievementRate: 0.96, paPlanRatio: 0.51 },
+  { id: "DL-02", name: "Sony Store 北京", tier: "dealer", parentId: "BR-A1", targetDemand: 36, netDemand: 32, achievementRate: 0.92, paPlanRatio: 0.49 },
+  { id: "DL-03", name: "京东五星", tier: "dealer", parentId: "BR-A2", targetDemand: 30, netDemand: 29, achievementRate: 0.9, paPlanRatio: 0.53 },
+  { id: "DL-04", name: "苏宁易购", tier: "dealer", parentId: "BR-A2", targetDemand: 28, netDemand: 26, achievementRate: 0.86, paPlanRatio: 0.47 },
+  { id: "DL-05", name: "华东数码-A", tier: "dealer", parentId: "BR-B1E", targetDemand: 28, netDemand: 26, achievementRate: 0.84, paPlanRatio: 0.54 },
+  { id: "DL-06", name: "沪上影音", tier: "dealer", parentId: "BR-B1E", targetDemand: 24, netDemand: 22, achievementRate: 0.78, paPlanRatio: 0.46 },
+  { id: "DL-07", name: "南方声学-C", tier: "dealer", parentId: "BR-B1S", targetDemand: 24, netDemand: 22, achievementRate: 0.78, paPlanRatio: 0.52 },
+  { id: "DL-08", name: "岭南视听", tier: "dealer", parentId: "BR-B1S", targetDemand: 22, netDemand: 20, achievementRate: 0.72, paPlanRatio: 0.48 },
+  { id: "DL-09", name: "中原电子-B", tier: "dealer", parentId: "BR-B2N", targetDemand: 27, netDemand: 25, achievementRate: 0.73, paPlanRatio: 0.53 },
+  { id: "DL-10", name: "北方通讯-E", tier: "dealer", parentId: "BR-B2N", targetDemand: 24, netDemand: 22, achievementRate: 0.69, paPlanRatio: 0.47 },
+  { id: "DL-11", name: "西部影音-D", tier: "dealer", parentId: "BR-B2W", targetDemand: 24, netDemand: 23, achievementRate: 0.7, paPlanRatio: 0.54 },
+  { id: "DL-12", name: "蓉城数码", tier: "dealer", parentId: "BR-B2W", targetDemand: 22, netDemand: 20, achievementRate: 0.66, paPlanRatio: 0.46 },
+  { id: "DL-13", name: "天猫 Sony", tier: "dealer", parentId: "BR-C1A", targetDemand: 33, netDemand: 30, achievementRate: 0.79, paPlanRatio: 0.53 },
+  { id: "DL-14", name: "京东 Sony", tier: "dealer", parentId: "BR-C1A", targetDemand: 29, netDemand: 27, achievementRate: 0.74, paPlanRatio: 0.47 },
+  { id: "DL-15", name: "抖音 Sony", tier: "dealer", parentId: "BR-C1B", targetDemand: 28, netDemand: 25, achievementRate: 0.71, paPlanRatio: 0.52 },
+  { id: "DL-16", name: "得物数码", tier: "dealer", parentId: "BR-C1B", targetDemand: 25, netDemand: 23, achievementRate: 0.67, paPlanRatio: 0.48 },
+  { id: "DL-17", name: "摄影器材城", tier: "dealer", parentId: "BR-C2EA", targetDemand: 28, netDemand: 26, achievementRate: 0.7, paPlanRatio: 1 },
+  { id: "DL-18", name: "专业影音网", tier: "dealer", parentId: "BR-C2EB", targetDemand: 25, netDemand: 24, achievementRate: 0.66, paPlanRatio: 1 },
+  { id: "DL-19", name: "校园数码渠道", tier: "dealer", parentId: "BR-C2WA", targetDemand: 25, netDemand: 24, achievementRate: 0.63, paPlanRatio: 1 },
+  { id: "DL-20", name: "东南家电-F", tier: "dealer", parentId: "BR-C2WB", targetDemand: 22, netDemand: 21, achievementRate: 0.59, paPlanRatio: 1 },
 ];
 
 export const DASHBOARD_HISTORY = [
@@ -153,12 +270,6 @@ export const CALIBRATION_TRUTH = [
   { dealerId: "D", estimated: 70, truth: 66 },
   { dealerId: "E", estimated: 162, truth: 154 },
   { dealerId: "F", estimated: 88, truth: 84 },
-];
-
-export const INITIAL_ALERTS = [
-  { id: "alert-credit", level: "warning" as const, time: "09:42", title: "中原电子-B 实时余额下降", detail: "锁单前置校验将按实时可用余额执行，预计部分锁单。" },
-  { id: "alert-confidence", level: "danger" as const, time: "09:28", title: "东南家电-F 库存估算不可信", detail: "真值与估算偏差超过阈值，本轮只走公平兜底。" },
-  { id: "alert-flow", level: "info" as const, time: "09:05", title: "WH-1000XM6 当日分货池就绪", detail: "已校验固定 seed、资金快照与周库存真值。" },
 ];
 
 export const SIMULATION_START_DATE = "2026-07-06T00:00:00+08:00";

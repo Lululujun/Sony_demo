@@ -269,3 +269,109 @@ export function buildWeeklyConfidenceSeries(
     };
   });
 }
+
+export type PsiSeason = "flat" | "peak";
+
+export interface PsiWeek {
+  week: number;
+  sellout: number;
+  isPeakSeason: boolean;
+}
+
+export interface PsiInput {
+  psiHistory12M: readonly PsiWeek[];
+  currentPsiInventory: number;
+  activeSeason: PsiSeason;
+}
+
+export interface PsiTurnoverResult {
+  avgWeeklySelloutFlat: number | null;
+  avgWeeklySelloutPeak: number | null;
+  selectedAverageWeeklySellout: number | null;
+  activeSeason: PsiSeason;
+  turnoverWeeks: number | null;
+  trace: string[];
+}
+
+function averageOrNull(values: readonly number[]): number | null {
+  if (values.length === 0) return null;
+  return round(values.reduce((sum, value) => sum + value, 0) / values.length);
+}
+
+/**
+ * Primary SSP PSI turnover measure:
+ * current PSI inventory / average weekly sellout for the active season.
+ *
+ * A missing seasonal sample or positive inventory with zero sellout is
+ * reported as null rather than 0/Infinity, both of which would misstate the
+ * business meaning and are unsafe for chart serialization.
+ */
+export function computeTurnoverWeeks(input: PsiInput): PsiTurnoverResult {
+  assertFiniteNonNegative(
+    input.currentPsiInventory,
+    "input.currentPsiInventory",
+  );
+  if (input.activeSeason !== "flat" && input.activeSeason !== "peak") {
+    throw new Error(`unknown PSI season: ${String(input.activeSeason)}`);
+  }
+
+  const seenWeeks = new Set<number>();
+  const flatSellout: number[] = [];
+  const peakSellout: number[] = [];
+  input.psiHistory12M.forEach((point, index) => {
+    if (!Number.isInteger(point.week) || point.week <= 0) {
+      throw new RangeError(
+        `input.psiHistory12M[${index}].week must be a positive integer`,
+      );
+    }
+    if (seenWeeks.has(point.week)) {
+      throw new Error(`duplicate PSI week: ${point.week}`);
+    }
+    seenWeeks.add(point.week);
+    assertFiniteNonNegative(
+      point.sellout,
+      `input.psiHistory12M[${index}].sellout`,
+    );
+    (point.isPeakSeason ? peakSellout : flatSellout).push(point.sellout);
+  });
+
+  const avgWeeklySelloutFlat = averageOrNull(flatSellout);
+  const avgWeeklySelloutPeak = averageOrNull(peakSellout);
+  const selectedAverageWeeklySellout =
+    input.activeSeason === "peak"
+      ? avgWeeklySelloutPeak
+      : avgWeeklySelloutFlat;
+  const turnoverWeeks =
+    input.currentPsiInventory === 0
+      ? 0
+      : selectedAverageWeeklySellout === null ||
+          selectedAverageWeeklySellout === 0
+        ? null
+        : round(
+            input.currentPsiInventory / selectedAverageWeeklySellout,
+          );
+  const activeLabel = input.activeSeason === "peak" ? "大促期" : "平销期";
+  const selectedLabel =
+    selectedAverageWeeklySellout === null
+      ? "无样本"
+      : `${selectedAverageWeeklySellout} 台/周`;
+  const turnoverLabel =
+    turnoverWeeks === null ? "无法估算" : `${turnoverWeeks} 周`;
+
+  return {
+    avgWeeklySelloutFlat,
+    avgWeeklySelloutPeak,
+    selectedAverageWeeklySellout,
+    activeSeason: input.activeSeason,
+    turnoverWeeks,
+    trace: [
+      `12 个月 PSI 按平销期 ${flatSellout.length} 周、大促期 ${peakSellout.length} 周分组。`,
+      `平销期周均 sellout = ${
+        avgWeeklySelloutFlat === null ? "无样本" : avgWeeklySelloutFlat
+      }；大促期周均 sellout = ${
+        avgWeeklySelloutPeak === null ? "无样本" : avgWeeklySelloutPeak
+      }。`,
+      `${activeLabel}选用周均 sellout ${selectedLabel}；当期 PSI 库存 ${input.currentPsiInventory} 台，消化周转周期 ${turnoverLabel}。`,
+    ],
+  };
+}

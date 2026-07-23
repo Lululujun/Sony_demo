@@ -31,6 +31,7 @@ describe("preset scenarios", () => {
       "WH-1000XM6",
       "A7M5",
       "PS5-PRO",
+      "WF-C710N-LTD",
     ]);
 
     const headphones = getScenarioSku("ppt", "WH-1000XM6");

@@ -18,7 +18,12 @@ import {
   RefreshCw,
   Warehouse,
 } from "lucide-react";
-import { classifyInventoryHealth, estimateSellThrough } from "@/src/core/inventory";
+import {
+  classifyInventoryHealth,
+  computeTurnoverWeeks,
+  estimateSellThrough,
+  type PsiSeason,
+} from "@/src/core/inventory";
 import type { InventoryConfidence, InventoryHealthTag } from "@/src/core/types";
 import { useDemo } from "@/src/store/DemoContext";
 import { DeferredResponsiveContainer } from "@/src/components/ui/DeferredResponsiveContainer";
@@ -38,8 +43,14 @@ const HEALTH_LABELS: Record<InventoryHealthTag, { label: string; tone: "stone" |
 };
 
 export function TurnoverPage() {
-  const { inventorySeeds, openCalibration } = useDemo();
+  const {
+    inventorySeeds,
+    dealerProfiles,
+    openCalibration,
+    fastForwardMonday,
+  } = useDemo();
   const [selectedDealer, setSelectedDealer] = useState("A");
+  const [activeSeason, setActiveSeason] = useState<PsiSeason>("flat");
   const selected = inventorySeeds.find((item) => item.dealerId === selectedDealer) ?? inventorySeeds[0];
 
   const confidenceData = useMemo(() => {
@@ -66,31 +77,67 @@ export function TurnoverPage() {
     });
   }, [selected]);
 
-  const tableRows = inventorySeeds.map((seed) => ({
-    seed,
-    flow: estimateSellThrough(seed),
-    health: classifyInventoryHealth(seed.currentInventory, seed.monthlyAverageAllocation),
-  }));
-  const dealerTurnover = selected.currentInventory / Math.max(1, selected.monthlyAverageAllocation / 4.345);
-  const headquartersTurnover = selected.headquartersTurnoverWeeks;
-  const conflict = Math.abs(dealerTurnover - headquartersTurnover) >= 0.35;
+  const tableRows = inventorySeeds.map((seed) => {
+    const profile = dealerProfiles.find((item) => item.dealerId === seed.dealerId);
+    return {
+      seed,
+      flow: estimateSellThrough(seed),
+      health: classifyInventoryHealth(seed.currentInventory, seed.monthlyAverageAllocation),
+      psi: computeTurnoverWeeks({
+        psiHistory12M: profile?.psiHistory12M ?? [],
+        currentPsiInventory: seed.currentInventory,
+        activeSeason,
+      }),
+    };
+  });
+  const selectedRow = tableRows.find(({ seed }) => seed.dealerId === selectedDealer) ?? tableRows[0];
+  const selectedPsi = selectedRow.psi;
+  const selectedFlow = selectedRow.flow;
 
   return (
     <div className="page turnover-page" data-testid="page-turnover">
       <PageHeading
         title="周转与校准"
-        help="日库存由周一真值、已知分货入库和估算动销递推；置信区间随距真值天数逐日扩大。"
+        help="主口径来自 SSP 过去 12 个月 PSI：按平销期与大促期分别计算周均 sellout，再用当期库存估算消化周转周期。"
         actions={(
-          <button type="button" className="button primary" onClick={openCalibration} data-testid="open-calibration">
-            <CalendarCheck size={16} /> 周初校准
-          </button>
+          <>
+            <div className="season-switch" aria-label="周转期段">
+              <button type="button" className={activeSeason === "flat" ? "active" : ""} onClick={() => setActiveSeason("flat")}>平销期</button>
+              <button type="button" className={activeSeason === "peak" ? "active" : ""} onClick={() => setActiveSeason("peak")}>大促期</button>
+            </div>
+            <button type="button" className="button outline" onClick={fastForwardMonday}>
+              <RefreshCw size={16} /> 模拟周一真值
+            </button>
+            <button type="button" className="button primary" onClick={openCalibration} data-testid="open-calibration">
+              <CalendarCheck size={16} /> 周初校准
+            </button>
+          </>
         )}
       />
 
+      <section className="metric-strip turnover-metric-strip" aria-label="PSI 周转摘要">
+        <div>
+          <span>{activeSeason === "flat" ? "平销期" : "大促期"}消化周转</span>
+          <div className="metric-value"><span>{selectedPsi.turnoverWeeks?.toFixed(1) ?? "—"}</span><sup>周</sup></div>
+        </div>
+        <div>
+          <span>平销周均 sellout</span>
+          <div className="metric-value"><span>{selectedPsi.avgWeeklySelloutFlat?.toFixed(1) ?? "—"}</span><sup>台/周</sup></div>
+        </div>
+        <div>
+          <span>大促周均 sellout</span>
+          <div className="metric-value"><span>{selectedPsi.avgWeeklySelloutPeak?.toFixed(1) ?? "—"}</span><sup>台/周</sup></div>
+        </div>
+        <div>
+          <span>当期 PSI 库存</span>
+          <div className="metric-value"><span>{selected.currentInventory}</span><sup>台</sup></div>
+        </div>
+      </section>
+
       <section className="card confidence-card">
         <CardTitle
-          title="14 天日库存估算"
-          detail="置信带在每周一真值日收窄"
+          title="辅助口径 · 14 天日库存估算"
+          detail="周一真值与置信带用于验证 PSI 主口径"
           actions={(
             <div className="confidence-actions">
               <div className="chart-legend"><span><i className="dot stone" />真值</span><span><i className="dot blue" />估算</span><span><i className="band-swatch" />置信区间</span></div>
@@ -124,24 +171,22 @@ export function TurnoverPage() {
 
       <div className="turnover-grid">
         <section className="card turnover-table-card">
-          <CardTitle title="经销商周转" detail="分货入库为正，估算去货为库存流出" />
+          <CardTitle title="SSP PSI sellout 消化周转" detail={`当前按${activeSeason === "flat" ? "平销期" : "大促期"}周均 sellout 计算`} />
           <div className="table-wrap">
             <table className="data-table turnover-table">
-              <thead><tr><th>经销商</th><th>期初</th><th>入库</th><th>期末</th><th>估算去货</th><th>去货率</th><th>健康度</th><th>置信度</th><th>下一轮</th></tr></thead>
+              <thead><tr><th>经销商</th><th>当期库存</th><th>平销周均</th><th>大促周均</th><th>当前期段</th><th>消化周转</th><th>库存健康</th></tr></thead>
               <tbody>
-                {tableRows.map(({ seed, flow, health }) => {
+                {tableRows.map(({ seed, psi, health }) => {
                   const healthLabel = HEALTH_LABELS[health.tag];
                   return (
                     <tr key={seed.dealerId} className={`${selectedDealer === seed.dealerId ? "selected" : ""} ${seed.confidence === "untrusted" ? "untrusted" : ""}`} onClick={() => setSelectedDealer(seed.dealerId)}>
                       <td><strong>{seed.dealerName}</strong></td>
-                      <td className="numeric">{seed.beginningInventory}</td>
-                      <td className="numeric">+{seed.inboundAllocation}</td>
-                      <td className="numeric">{seed.endingInventory}</td>
-                      <td className="numeric strong">{flow.estimatedSellThroughUnits}</td>
-                      <td className="numeric">{(flow.sellThroughRate * 100).toFixed(1)}%</td>
+                      <td className="numeric">{seed.currentInventory}</td>
+                      <td className="numeric">{psi.avgWeeklySelloutFlat?.toFixed(1) ?? "—"}</td>
+                      <td className="numeric">{psi.avgWeeklySelloutPeak?.toFixed(1) ?? "—"}</td>
+                      <td>{activeSeason === "flat" ? "平销期" : "大促期"}</td>
+                      <td className="numeric strong">{psi.turnoverWeeks?.toFixed(1) ?? "无法估算"}{psi.turnoverWeeks !== null && " 周"}</td>
                       <td><StatusPill tone={healthLabel.tone}>{healthLabel.label}</StatusPill></td>
-                      <td><ConfidenceDots confidence={seed.confidence} /></td>
-                      <td>{seed.confidence === "untrusted" ? <StatusPill tone="stone">只走保底</StatusPill> : health.tag === "overstock" ? "少给" : health.tag === "stockout_risk" ? "优先补" : "保持"}</td>
                     </tr>
                   );
                 })}
@@ -151,23 +196,27 @@ export function TurnoverPage() {
         </section>
 
         <aside className="card turnover-side-card">
-          <CardTitle title="双视角周转" />
+          <CardTitle title="口径说明与交叉校验" />
           <div className="primary-turnover">
-            <span><Warehouse size={17} />经销商侧（主）</span>
-            <strong>{dealerTurnover.toFixed(1)}<sup>周</sup></strong>
+            <span><Warehouse size={17} />SSP PSI（主）</span>
+            <strong>{selectedPsi.turnoverWeeks?.toFixed(1) ?? "—"}<sup>周</sup></strong>
           </div>
           <div className="secondary-turnover">
-            <span>总部 / 仓库（参考）</span>
-            <strong>{headquartersTurnover.toFixed(1)}<sup>周</sup></strong>
+            <span>库存流量法（交叉校验）</span>
+            <strong>{selectedFlow.estimatedSellThroughUnits.toFixed(1)}<sup>台</sup></strong>
           </div>
-          {conflict && (
-            <div className="turnover-conflict"><CircleAlert size={17} /><span>两种口径存在差异，本轮按经销商侧周转决策。</span></div>
-          )}
+          <div className="turnover-conflict"><CircleAlert size={17} /><span>分货判断优先使用 SSP PSI sellout 周转；库存流量法仅用于检查数据口径是否一致。</span></div>
           <div className="inventory-formula">
-            <span>估算去货</span>
+            <span>主口径</span>
+            <strong>当期 PSI 库存 ÷ 对应期段周均 sellout</strong>
+          </div>
+          <div className="inventory-formula secondary">
+            <span>交叉校验</span>
             <strong>期初库存 + 本期分货量 − 期末库存</strong>
           </div>
-          <button type="button" className="button outline full" onClick={openCalibration}><RefreshCw size={16} />模拟周一真值到达</button>
+          <div className="psi-trace">
+            {selectedPsi.trace.map((line) => <p key={line}>{line}</p>)}
+          </div>
         </aside>
       </div>
     </div>

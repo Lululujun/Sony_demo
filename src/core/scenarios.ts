@@ -103,6 +103,20 @@ const PPT_PS5 = profile(
   ],
 );
 
+const PPT_SKIPPED = profile(
+  "WF-C710N-LTD",
+  "WF-C710N 限量色",
+  "真无线耳机",
+  899,
+  "突发小批量限量物料已命中 Skip 清单：自动求解会被短路，并转交 SSP 人工分配。",
+  { supply: 12, fairBudgetRatio: 0.8, seasonFactor: 1, scarcity: 0.95 },
+  [
+    dealer("A", 20, 30, 1.2, 1.35, 4, "high", "stockout_risk"),
+    dealer("B", 18, 16, 1, 1.05, 8, "mid", "healthy"),
+    dealer("C", 14, 20, 0.9, 0.88, 12, "high", "healthy"),
+  ],
+);
+
 export const PPT_SCENARIO: AllocationScenario = {
   id: "ppt",
   name: "PPT 示意场景",
@@ -110,11 +124,12 @@ export const PPT_SCENARIO: AllocationScenario = {
   sku: PPT_WH.id,
   params: PPT_WH.params,
   dealers: PPT_WH.dealers,
-  skus: [PPT_WH, PPT_ALPHA, PPT_PS5],
+  skus: [PPT_WH, PPT_ALPHA, PPT_PS5, PPT_SKIPPED],
   narrative: [
     "WH-1000XM6 严格复现 A/B/C = 108/50/52。",
     "切换 Alpha 7 V 后渠道数、供给量与高客单额度约束同步变化。",
     "切换 PS5 Pro 后进入五渠道新品首发结构，效率倾斜更明显。",
+    "切换 WF-C710N 限量色后可验证 Skip 清单会在求解前转人工。",
   ],
 };
 

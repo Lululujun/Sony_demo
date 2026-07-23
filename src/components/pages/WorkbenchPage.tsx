@@ -34,6 +34,7 @@ import {
 } from "lucide-react";
 import type { AllocationScenarioId, AllocationStep, Dealer } from "@/src/core/types";
 import { SCENARIOS } from "@/src/core/scenarios";
+import { applyWklyRatio } from "@/src/core/ratios";
 import { LEARNING_HISTORY } from "@/src/mock/seed";
 import { useDemo, type FactorOverrides } from "@/src/store/DemoContext";
 import { DeferredResponsiveContainer } from "@/src/components/ui/DeferredResponsiveContainer";
@@ -146,10 +147,15 @@ export function WorkbenchPage() {
     dealers,
     params,
     allocation,
-    releasedPool,
     updateParams,
     updateDealer,
-    writeBackSap,
+    writeBackAllocationRfc,
+    ratioConfig,
+    bigCustomers,
+    isCurrentSkuSkipped,
+    layeringStopsAtHq,
+    drillDownTarget,
+    clearDrillDownTarget,
     shotPreset,
     notify,
   } = useDemo();
@@ -176,6 +182,13 @@ export function WorkbenchPage() {
       setInputCollapsed(true);
     }
   }, [shotPreset]);
+
+  useEffect(() => {
+    if (!drillDownTarget?.startsWith("allocation-")) return;
+    setExpandedDealer(dealers[0]?.id ?? null);
+    setInputCollapsed(true);
+    clearDrillDownTarget();
+  }, [clearDrillDownTarget, dealers, drillDownTarget]);
 
   useEffect(() => {
     if (!playing) return;
@@ -218,6 +231,8 @@ export function WorkbenchPage() {
   );
   const satisfaction = totalDemand ? (demandSatisfied / totalDemand) * 100 : 100;
   const covered = allocation.results.filter((result) => result.finalAlloc > 0).length;
+  const creditCapped = allocation.results.filter((result) => result.cappedByCredit).length;
+  const solverDisabled = isCurrentSkuSkipped || layeringStopsAtHq;
 
   const exportCsv = () => {
     const header = ["经销商", "需求", "额度", "公平层", "效率层", "最终分配", "满足率"];
@@ -259,14 +274,14 @@ export function WorkbenchPage() {
         )}
         actions={(
           <>
-            <button type="button" className="button outline" onClick={() => setWeightsOpen(true)}>
-              <Settings2 size={16} /> 权重设置
+            <button type="button" className="button outline" disabled={solverDisabled} onClick={() => setWeightsOpen(true)}>
+              <Settings2 size={16} /> 求解因子
             </button>
-            <button type="button" className="button outline" onClick={exportCsv}>
+            <button type="button" className="button outline" disabled={solverDisabled} onClick={exportCsv}>
               <Download size={16} /> 导出
             </button>
-            <button type="button" className="button primary" onClick={writeBackSap} data-testid="write-back-sap">
-              <Send size={16} /> 回写 SAP
+            <button type="button" className="button primary" disabled={solverDisabled} onClick={writeBackAllocationRfc} data-testid="write-back-sap">
+              <Send size={16} /> 调用 SAP 产品分配 RFC 回写
             </button>
           </>
         )}
@@ -315,6 +330,11 @@ export function WorkbenchPage() {
                 </select>
               </label>
               <p className="sku-story">{activeSku.story}</p>
+              <div className="source-label-group" aria-label="数据来源">
+                <span><b>MIA</b> 月度目标</span>
+                <span><b>SAP</b> 订单 · 库存 · 货款</span>
+                <span><b>SSP</b> 历史 PSI</span>
+              </div>
               <label className="field-label">
                 <span>今日可分货量</span>
                 <input
@@ -332,7 +352,23 @@ export function WorkbenchPage() {
                   <div className="dealer-input-card" key={dealer.id}>
                     <div className="dealer-input-name">
                       <strong>{dealer.name}</strong>
-                      {dealer.inventoryConfidence === "untrusted" && <StatusPill tone="stone">仅保底</StatusPill>}
+                      <span className="dealer-business-tags">
+                        {bigCustomers[dealer.id] && <StatusPill tone="blue">大客户</StatusPill>}
+                        {(() => {
+                          const weekly = applyWklyRatio(
+                            dealer.monthlyTarget ?? dealer.demand * 4,
+                            ratioConfig.wklyRatioByCategory[activeSku.category] ?? 0.25,
+                            Boolean(bigCustomers[dealer.id]),
+                            ratioConfig.kBig,
+                          );
+                          return (
+                            <StatusPill tone={weekly.exempted ? "emerald" : "stone"}>
+                              {weekly.weeklyCap === null ? "周上限豁免" : `本周上限 ${weekly.weeklyCap}`}
+                            </StatusPill>
+                          );
+                        })()}
+                        {dealer.inventoryConfidence === "untrusted" && <StatusPill tone="stone">仅保底</StatusPill>}
+                      </span>
                     </div>
                     <div className="dealer-fields-grid">
                       <DebouncedNumberInput label="需求" ariaLabel={`${dealer.name}需求`} value={dealer.demand} onCommit={(value) => updateDealer(dealer.id, { demand: value })} />
@@ -353,14 +389,34 @@ export function WorkbenchPage() {
         </aside>
 
         <div className="workbench-main">
-          <section className="metric-strip" aria-label="本次分货指标">
-            <div><span>可分货量</span>{metricValue(params.supply, "台")}</div>
-            <div><span>覆盖经销商</span>{metricValue(`${covered}/${dealers.length}`, "家")}</div>
-            <div><span>需求满足率</span>{metricValue(satisfaction.toFixed(1), "%")}</div>
-            <div className={releasedPool > 0 ? "metric-highlight" : ""}><span>释放回流</span>{metricValue(`+${releasedPool}`, "台")}</div>
-          </section>
+          {solverDisabled ? (
+            <section className={`card workbench-routing-callout ${isCurrentSkuSkipped ? "skip" : "layer-stop"}`} data-testid="workbench-routing-callout">
+              <div>
+                <StatusPill tone={isCurrentSkuSkipped ? "amber" : "blue"}>
+                  {isCurrentSkuSkipped ? "Skip 命中" : "总部层停靠"}
+                </StatusPill>
+                <h2>
+                  {isCurrentSkuSkipped
+                    ? "该物料已跳过自动求解"
+                    : "本轮停靠总部层，无需逐户分配"}
+                </h2>
+                <p>
+                  {isCurrentSkuSkipped
+                    ? `${activeSku.id} 已转 SSP 人工分配；系统不会生成经销商级分配结果或 RFC。`
+                    : "供给已满足总部层有效净需求，可直接形成总部级下单计划；切换到 P2 货源偏紧场景可继续演示逐级下沉。"}
+                </p>
+              </div>
+            </section>
+          ) : (
+            <>
+              <section className="metric-strip" aria-label="本次分货指标">
+                <div><span>可分货量</span>{metricValue(params.supply, "台")}</div>
+                <div><span>覆盖经销商</span>{metricValue(`${covered}/${dealers.length}`, "家")}</div>
+                <div><span>需求满足率</span>{metricValue(satisfaction.toFixed(1), "%")}</div>
+                <div className={creditCapped > 0 ? "metric-highlight" : ""}><span>额度触顶</span>{metricValue(creditCapped, "家")}</div>
+              </section>
 
-          <section className="solver-card card">
+              <section className="solver-card card">
             <CardTitle
               title="分配结果"
               detail={currentEvent ? `当前：${frameLabel(currentEvent)}` : "最近一次求解结果"}
@@ -478,9 +534,9 @@ export function WorkbenchPage() {
                 </button>
               ))}
             </div>
-          </section>
+              </section>
 
-          <section className="result-card card">
+              <section className="result-card card">
             <CardTitle
               title="分配明细"
               detail="点击经销商展开分配轨迹"
@@ -530,7 +586,9 @@ export function WorkbenchPage() {
                 </tbody>
               </table>
             </div>
-          </section>
+              </section>
+            </>
+          )}
         </div>
       </div>
 

@@ -8,7 +8,7 @@ import "./globals.css";
 
 export const metadata: Metadata = {
   title: "索尼分货 Agent · 4seeTech",
-  description: "面向分货运营、方案推演、锁单执行与库存校准的交互式工作台",
+  description: "面向智能分层、动态比例、方案推演、PSI 周转与诊断配置的产品分配 Agent",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

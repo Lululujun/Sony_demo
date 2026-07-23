@@ -16,6 +16,11 @@ export interface Dealer {
   inventory: number;
   inventoryConfidence: InventoryConfidence;
   healthTag: InventoryHealthTag;
+  /** RFP planning attributes. Optional so the original white-box fixtures stay compatible. */
+  monthlyTarget?: number;
+  turnoverWeeks?: number;
+  isDirectSales?: boolean;
+  category?: string;
 }
 
 export interface AllocationParams {
@@ -125,66 +130,6 @@ export interface AllocationScenario {
   /** All selectable SKU datasets available under this scenario. */
   skus: ScenarioSkuProfile[];
   narrative: string[];
-}
-
-export type LockStatus =
-  | "ALLOCATED"
-  | "SOFT_LOCKED"
-  | "CONFIRMED"
-  | "WAIVED"
-  | "RELEASED";
-
-export type LockReleaseReason =
-  | "NONE"
-  | "CREDIT_PARTIAL"
-  | "CREDIT_REJECTED"
-  | "ACTIVE_WAIVER"
-  | "PAYMENT_TIMEOUT";
-
-export interface LockAuditEntry {
-  sequence: number;
-  at: number;
-  event: LockEvent["type"] | "CREATED";
-  from: LockStatus;
-  to: LockStatus;
-  units: number;
-  releasedUnits: number;
-  scoreDelta: number;
-  message: string;
-}
-
-export interface LockOrder {
-  id: string;
-  dealerId: string;
-  dealerName: string;
-  sku: string;
-  allocatedUnits: number;
-  lockedUnits: number;
-  releasedUnits: number;
-  creditCapUnitsAtCheck: number;
-  status: LockStatus;
-  releaseReason: LockReleaseReason;
-  softLockExpiresAt?: number;
-  scoreDelta: number;
-  auditTrail: LockAuditEntry[];
-}
-
-export type LockEvent =
-  | {
-      type: "REQUEST_LOCK";
-      now: number;
-      creditCapUnits: number;
-      ttlMs?: number;
-    }
-  | { type: "CONFIRM_PAYMENT"; now: number }
-  | { type: "WAIVE"; now: number }
-  | { type: "TICK"; now: number };
-
-export interface LockTransitionResult {
-  order: LockOrder;
-  accepted: boolean;
-  releasedToSupply: number;
-  message: string;
 }
 
 export interface SellThroughInput {

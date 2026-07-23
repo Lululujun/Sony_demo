@@ -4,6 +4,7 @@ import {
   buildWeeklyConfidenceSeries,
   calibrateInventory,
   classifyInventoryHealth,
+  computeTurnoverWeeks,
   estimateDailyInventory,
   estimateSellThrough,
   inventoryConfidenceInterval,
@@ -104,5 +105,99 @@ describe("inventory flow and confidence", () => {
     expect(first).toHaveLength(7);
     expect(first[0]).toMatchObject({ estimate: 60, lower: 60, upper: 60 });
     expect(first[6].halfWidth).toBeGreaterThan(first[1].halfWidth);
+  });
+
+  it("uses SSP PSI sellout as the primary flat/peak turnover measure", () => {
+    const history = [
+      { week: 1, sellout: 10, isPeakSeason: false },
+      { week: 2, sellout: 14, isPeakSeason: false },
+      { week: 3, sellout: 24, isPeakSeason: true },
+      { week: 4, sellout: 16, isPeakSeason: true },
+    ];
+    const flat = computeTurnoverWeeks({
+      psiHistory12M: history,
+      currentPsiInventory: 120,
+      activeSeason: "flat",
+    });
+    const peak = computeTurnoverWeeks({
+      psiHistory12M: history,
+      currentPsiInventory: 120,
+      activeSeason: "peak",
+    });
+
+    expect(flat).toMatchObject({
+      avgWeeklySelloutFlat: 12,
+      avgWeeklySelloutPeak: 20,
+      selectedAverageWeeklySellout: 12,
+      turnoverWeeks: 10,
+    });
+    expect(peak).toMatchObject({
+      selectedAverageWeeklySellout: 20,
+      turnoverWeeks: 6,
+    });
+    expect(flat.trace).toHaveLength(3);
+  });
+
+  it("reports uncomputable PSI turnover as null instead of zero or Infinity", () => {
+    expect(
+      computeTurnoverWeeks({
+        psiHistory12M: [
+          { week: 1, sellout: 0, isPeakSeason: false },
+        ],
+        currentPsiInventory: 30,
+        activeSeason: "flat",
+      }).turnoverWeeks,
+    ).toBeNull();
+    expect(
+      computeTurnoverWeeks({
+        psiHistory12M: [
+          { week: 1, sellout: 8, isPeakSeason: false },
+        ],
+        currentPsiInventory: 30,
+        activeSeason: "peak",
+      }),
+    ).toMatchObject({
+      avgWeeklySelloutPeak: null,
+      turnoverWeeks: null,
+    });
+    expect(
+      computeTurnoverWeeks({
+        psiHistory12M: [],
+        currentPsiInventory: 0,
+        activeSeason: "peak",
+      }).turnoverWeeks,
+    ).toBe(0);
+  });
+
+  it("keeps PSI calculation deterministic and validates weekly history", () => {
+    const input = {
+      psiHistory12M: [
+        { week: 1, sellout: 10, isPeakSeason: false },
+        { week: 2, sellout: 20, isPeakSeason: true },
+      ],
+      currentPsiInventory: 50,
+      activeSeason: "flat" as const,
+    };
+    const before = JSON.parse(JSON.stringify(input));
+
+    expect(computeTurnoverWeeks(input)).toEqual(computeTurnoverWeeks(input));
+    expect(input).toEqual(before);
+    expect(() =>
+      computeTurnoverWeeks({
+        ...input,
+        psiHistory12M: [
+          { week: 1, sellout: 10, isPeakSeason: false },
+          { week: 1, sellout: 20, isPeakSeason: true },
+        ],
+      }),
+    ).toThrow(/duplicate PSI week/);
+    expect(() =>
+      computeTurnoverWeeks({
+        ...input,
+        psiHistory12M: [
+          { week: 1, sellout: -1, isPeakSeason: false },
+        ],
+      }),
+    ).toThrow(/non-negative/);
   });
 });
