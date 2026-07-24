@@ -33,6 +33,7 @@ import {
   PageHeading,
   StatusPill,
 } from "@/src/components/ui/Primitives";
+import { TraceConsole } from "@/src/components/ui/TraceConsole";
 
 interface RfpDealer extends Dealer {
   monthlyTarget?: number;
@@ -249,7 +250,10 @@ export function RatiosPage() {
         )}
       />
 
-      <div className="ratios-upper-grid">
+      <div
+        className="ratios-composition-grid"
+        data-testid="ratio-section-pa"
+      >
         <section className="card ratio-system-card">
           <CardTitle
             title="PA Plan Ratio · 三维度合成"
@@ -291,87 +295,31 @@ export function RatiosPage() {
             </div>
           </div>
 
-          <div className="ratio-rule-grid">
-            <article className="ratio-rule-card weekly">
-              <div className="ratio-rule-title">
-                <span>Wkly Ratio</span>
-                <StatusPill tone={weeklyPlan.exempted ? "amber" : "blue"}>
-                  {weeklyPlan.exempted ? "大客户豁免周上限" : "周上限生效"}
-                </StatusPill>
-              </div>
-              <div className="ratio-equation">
-                <strong>{monthlyTarget}</strong>
-                <span>×</span>
-                <strong>{percent(wklyRatio)}</strong>
-                <span>=</span>
-                <strong>
-                  {weeklyPlan.weeklyCap ?? weeklyPlan.planningReference}
-                  <small>台</small>
-                </strong>
-              </div>
-              <p>{weeklyPlan.note}</p>
-            </article>
-
-            <article className="ratio-rule-card credit">
-              <div className="ratio-rule-title">
-                <span>硬约束收口</span>
-                <StatusPill
-                  tone={
-                    weeklyResolution.cappedByCredit ||
-                    weeklyResolution.cappedByWeekly
-                      ? "amber"
-                      : "emerald"
-                  }
-                >
-                  {weeklyResolution.cappedByCredit
-                    ? "额度封顶"
-                    : weeklyResolution.cappedByWeekly
-                      ? "周上限封顶"
-                      : "校验通过"}
-                </StatusPill>
-              </div>
-              <div className="ratio-equation">
-                <strong>{weeklyResolution.requestedUnits}</strong>
-                <span>→</span>
-                <strong>{weeklyResolution.allocatedUnits}</strong>
-                <small>台</small>
-              </div>
-              <p>
-                即使豁免 Wkly Ratio，最终仍受额度 ≤{" "}
-                {selectedDealer?.creditCapUnits ?? 0} 台约束。
-              </p>
-            </article>
+          <div className="ratio-composition-evidence">
+            <div className="ratio-evidence-head">
+              <strong>本次合成输入</strong>
+              <span>所有中间量来自当前经销商快照</span>
+            </div>
+            <div className="ratio-evidence-grid">
+              <div><span>需求</span><strong>{selectedDealer?.demand ?? 0}<small>台</small></strong></div>
+              <div><span>库存</span><strong>{selectedDealer?.inventory ?? 0}<small>台</small></strong></div>
+              <div><span>额度</span><strong>{selectedDealer?.creditCapUnits ?? 0}<small>台</small></strong></div>
+              <div><span>消化周转</span><strong>{turnoverWeeks.toFixed(1)}<small>周</small></strong></div>
+            </div>
+            <p>
+              {paPlan.breakdown.supplyDemand.toFixed(3)} ×{" "}
+              {ratioConfig.weights.supplyDemand.toFixed(2)} +{" "}
+              {paPlan.breakdown.operation.toFixed(3)} ×{" "}
+              {ratioConfig.weights.operation.toFixed(2)} +{" "}
+              {paPlan.breakdown.strategy.toFixed(3)} ×{" "}
+              {ratioConfig.weights.strategy.toFixed(2)} →{" "}
+              <strong>{paPlan.ratio.toFixed(3)}</strong>
+            </p>
           </div>
 
-          <section className="channel-sequence">
-            <div className="channel-sequence-head">
-              <strong>直营优先 + Buffer</strong>
-              <span>Σ {channelSequence.totalAccounted} / {params.supply}</span>
-            </div>
-            <div className="channel-sequence-steps">
-              <div>
-                <span>01</span>
-                <p>直营优先</p>
-                <strong>{channelSequence.directAllocated}<small>台</small></strong>
-              </div>
-              <ArrowRight size={16} />
-              <div>
-                <span>02</span>
-                <p>预留 Buffer</p>
-                <strong>{channelSequence.bufferReserved}<small>台</small></strong>
-              </div>
-              <ArrowRight size={16} />
-              <div>
-                <span>03</span>
-                <p>其他渠道池</p>
-                <strong>{channelSequence.otherChannelsPool}<small>台</small></strong>
-              </div>
-            </div>
-          </section>
         </section>
 
-        <aside className="ratio-side-stack">
-          <section className="card ratio-config-card">
+        <aside className="card ratio-config-card">
             <CardTitle
               title="PIC 参数配置"
               detail={`产品组：${activeSku.category}`}
@@ -430,7 +378,7 @@ export function RatiosPage() {
               })}
             </div>
 
-            <label className="parameter-slider">
+            <label className="parameter-slider ratio-weekly-field">
               <span>
                 <b>{activeSku.category} Wkly Ratio</b>
                 <strong>{percent(wklyRatio)}</strong>
@@ -448,6 +396,23 @@ export function RatiosPage() {
                     Number(event.target.value),
                   )
                 }
+              />
+            </label>
+
+            <label className="dealer-field ratio-kbig-field">
+              <span>大客户增益 kBig</span>
+              <input
+                type="number"
+                min={1}
+                max={2}
+                step={0.05}
+                value={numberInputValue(ratioConfig.kBig)}
+                onChange={(event) => {
+                  const nextValue = Number(event.target.value);
+                  if (Number.isFinite(nextValue) && nextValue >= 1) {
+                    updateBigCustomerK(nextValue);
+                  }
+                }}
               />
             </label>
 
@@ -471,53 +436,101 @@ export function RatiosPage() {
                 {selectedIsBig ? "已启用" : "未启用"}
               </button>
             </div>
-
-            <label className="dealer-field ratio-kbig-field">
-              <span>大客户增益 kBig</span>
-              <input
-                type="number"
-                min={1}
-                max={2}
-                step={0.05}
-                value={numberInputValue(ratioConfig.kBig)}
-                onChange={(event) => {
-                  const nextValue = Number(event.target.value);
-                  if (Number.isFinite(nextValue) && nextValue >= 1) {
-                    updateBigCustomerK(nextValue);
-                  }
-                }}
-              />
-            </label>
-          </section>
-
-          <section className="card ratio-trace-card">
-            <CardTitle
-              title="计算轨迹"
-              detail="每个得分均可解释、可复现"
-            />
-            <div className="ratio-trace audit-console">
-              <div className="audit-title">pa_plan_ratio.trace</div>
-              {[...paPlan.trace, ...channelSequence.trace].map(
-                (message, index) => (
-                  <div key={`${index}-${message}`}>
-                    <span>#{String(index + 1).padStart(2, "0")}</span>
-                    <b>{index < paPlan.trace.length ? "比例" : "顺序"}</b>
-                    <em>{index < paPlan.trace.length ? "SCORE" : "ALLOC"}</em>
-                    <strong>—</strong>
-                    <p>{message}</p>
-                  </div>
-                ),
-              )}
-              <div className="audit-total">
-                ratio = {paPlan.ratio.toFixed(4)} · allocation Σ ={" "}
-                {channelSequence.totalAccounted} ✓
-              </div>
-            </div>
-          </section>
         </aside>
       </div>
 
-      <div className="special-material-grid">
+      <section
+        className="ratio-rule-grid"
+        aria-label="周比例与渠道顺序"
+        data-testid="ratio-section-rules"
+      >
+        <article className="card ratio-rule-card weekly">
+          <div className="ratio-rule-title">
+            <span>Wkly Ratio</span>
+            <StatusPill tone={weeklyPlan.exempted ? "amber" : "blue"}>
+              {weeklyPlan.exempted ? "大客户豁免周上限" : "周上限生效"}
+            </StatusPill>
+          </div>
+          <div className="ratio-equation">
+            <strong>{monthlyTarget}</strong>
+            <span>×</span>
+            <strong>{percent(wklyRatio)}</strong>
+            <span>=</span>
+            <strong>
+              {weeklyPlan.weeklyCap ?? weeklyPlan.planningReference}
+              <small>台</small>
+            </strong>
+          </div>
+          <p>{weeklyPlan.note}</p>
+        </article>
+
+        <article className="card ratio-rule-card credit">
+          <div className="ratio-rule-title">
+            <span>硬约束收口</span>
+            <StatusPill
+              tone={
+                weeklyResolution.cappedByCredit ||
+                weeklyResolution.cappedByWeekly
+                  ? "amber"
+                  : "emerald"
+              }
+            >
+              {weeklyResolution.cappedByCredit
+                ? "额度封顶"
+                : weeklyResolution.cappedByWeekly
+                  ? "周上限封顶"
+                  : "校验通过"}
+            </StatusPill>
+          </div>
+          <div className="ratio-equation">
+            <strong>{weeklyResolution.requestedUnits}</strong>
+            <span>→</span>
+            <strong>{weeklyResolution.allocatedUnits}</strong>
+            <small>台</small>
+          </div>
+          <p>
+            即使豁免 Wkly Ratio，最终仍受额度 ≤{" "}
+            {selectedDealer?.creditCapUnits ?? 0} 台约束。
+          </p>
+        </article>
+
+        <article className="card ratio-rule-card channel-sequence-card">
+          <div className="channel-sequence-head">
+            <strong>直营优先 + Buffer</strong>
+            <span>Σ {channelSequence.totalAccounted} / {params.supply}</span>
+          </div>
+          <div className="channel-sequence-steps">
+            <div>
+              <span>01</span>
+              <p>直营优先</p>
+              <strong>
+                {channelSequence.directAllocated}<small>台</small>
+              </strong>
+            </div>
+            <ArrowRight size={16} />
+            <div>
+              <span>02</span>
+              <p>预留 Buffer</p>
+              <strong>
+                {channelSequence.bufferReserved}<small>台</small>
+              </strong>
+            </div>
+            <ArrowRight size={16} />
+            <div>
+              <span>03</span>
+              <p>其他渠道池</p>
+              <strong>
+                {channelSequence.otherChannelsPool}<small>台</small>
+              </strong>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <div
+        className="special-material-grid"
+        data-testid="ratio-section-special"
+      >
         <section className="card color-variant-card">
           <CardTitle
             title="同型号多色分配"
@@ -602,7 +615,7 @@ export function RatiosPage() {
               </tbody>
             </table>
           </div>
-          <div className="color-model-check">
+          <div className="color-model-check" data-testid="color-model-check">
             <BadgeCheck size={17} />
             <span>
               型号 {colorVariants[0]?.modelId ?? activeSku.id}：
@@ -665,6 +678,31 @@ export function RatiosPage() {
           </div>
         </aside>
       </div>
+
+      <TraceConsole
+        title="计算轨迹"
+        subtitle="每个得分均可解释、可复现"
+        technicalLabel="pa_plan_ratio.trace"
+        variant="band"
+        collapsible
+        defaultCollapsed
+        className="ratio-trace-band"
+        steps={[...paPlan.trace, ...channelSequence.trace].map(
+          (message, index) => ({
+            index: index + 1,
+            scope: index < paPlan.trace.length ? "比例" : "顺序",
+            action: index < paPlan.trace.length ? "SCORE" : "ALLOC",
+            value: "—",
+            reason: message,
+          }),
+        )}
+        footer={(
+          <>
+            ratio = {paPlan.ratio.toFixed(4)} · allocation Σ ={" "}
+            {channelSequence.totalAccounted} ✓
+          </>
+        )}
+      />
     </div>
   );
 }

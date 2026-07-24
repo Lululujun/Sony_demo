@@ -14,7 +14,6 @@ import {
 } from "lucide-react";
 import type {
   LayeringDecision,
-  LayeringStep,
   TierId,
   TierNode,
 } from "@/src/core/layering";
@@ -24,6 +23,7 @@ import {
   PageHeading,
   StatusPill,
 } from "@/src/components/ui/Primitives";
+import { TraceConsole } from "@/src/components/ui/TraceConsole";
 
 const TIER_ORDER: TierId[] = [
   "hq",
@@ -90,6 +90,9 @@ export function LayeringPage() {
     shotPreset,
   } = useDemo();
   const [selectedPath, setSelectedPath] = useState<SelectedPath>({});
+  const [highlightedNodeId, setHighlightedNodeId] = useState<string | null>(
+    null,
+  );
 
   useEffect(() => {
     if (shotPreset === "layering-p1") setLayeringScenario("p1");
@@ -98,7 +101,17 @@ export function LayeringPage() {
 
   useEffect(() => {
     setSelectedPath({});
+    setHighlightedNodeId(null);
   }, [layeringScenario]);
+
+  useEffect(() => {
+    if (
+      highlightedNodeId &&
+      !layeringDecision.trace.some((step) => step.nodeId === highlightedNodeId)
+    ) {
+      setHighlightedNodeId(null);
+    }
+  }, [highlightedNodeId, layeringDecision.trace]);
 
   const nodeById = useMemo(
     () => new Map(orgTree.map((node) => [node.id, node])),
@@ -150,12 +163,33 @@ export function LayeringPage() {
 
   const chooseNode = (tier: TierId, nodeId: string) => {
     const tierIndex = TIER_ORDER.indexOf(tier);
+    setHighlightedNodeId(null);
     setSelectedPath((current) => {
       const next: SelectedPath = { ...current, [tier]: nodeId };
       TIER_ORDER.slice(tierIndex + 1).forEach((deeperTier) => {
         delete next[deeperTier];
       });
       return next;
+    });
+  };
+
+  const highlightTraceNode = (nodeId: string) => {
+    const nextPath: SelectedPath = {};
+    let node = nodeById.get(nodeId);
+
+    while (node) {
+      nextPath[node.tier] = node.id;
+      node = node.parentId ? nodeById.get(node.parentId) : undefined;
+    }
+
+    setSelectedPath(nextPath);
+    setHighlightedNodeId(nodeId);
+    requestAnimationFrame(() => {
+      document.getElementById(`layer-node-${nodeId}`)?.scrollIntoView({
+        behavior: "smooth",
+        block: "nearest",
+        inline: "center",
+      });
     });
   };
 
@@ -201,7 +235,7 @@ export function LayeringPage() {
         </div>
       </section>
 
-      <div className="layering-layout">
+      <div className="layering-main-grid">
         <aside className="card layering-config-panel">
           <div className="layering-panel-head">
             <SlidersHorizontal size={17} />
@@ -299,11 +333,15 @@ export function LayeringPage() {
                             className={[
                               "layering-node",
                               selected ? "selected" : "",
+                              highlightedNodeId === node.id
+                                ? "trace-highlight"
+                                : "",
                               stopped ? "stopped" : "",
                               blocked ? "blocked" : "",
                             ].filter(Boolean).join(" ")}
                             onClick={() => chooseNode(tier, node.id)}
                             aria-pressed={selected}
+                            id={`layer-node-${node.id}`}
                             data-testid={`layer-node-${node.id}`}
                           >
                             <span className="layering-node-name">
@@ -364,35 +402,31 @@ export function LayeringPage() {
             </div>
           </div>
         </section>
-
-        <aside className="card layering-trace-card">
-          <CardTitle
-            title="Agent 决策轨迹"
-            detail={`${layeringDecision.trace.length} 步 · 同输入可复现`}
-          />
-          <div className="layering-trace audit-console">
-            <div className="audit-title">layering.trace</div>
-            {layeringDecision.trace.map((step: LayeringStep) => (
-              <div className="layering-trace-step" key={step.step}>
-                <span>#{String(step.step).padStart(2, "0")}</span>
-                <b>{TIER_LABELS[step.tier]}</b>
-                <em>{step.action === "STOP" ? "STOP" : "DESCEND"}</em>
-                <strong>{step.allocatedUnits}</strong>
-                <p>
-                  {step.nodeName} · 满足度 {percent(step.satisfaction)} /
-                  阈值 {percent(step.threshold)}
-                  <br />
-                  {step.reason}
-                </p>
-              </div>
-            ))}
-            <div className="audit-total">
-              frontier Σ = {frontierAllocated} · supply = {layeringSupply}
-              {layeringDecision.supplyConserved ? " ✓" : ""}
-            </div>
-          </div>
-        </aside>
       </div>
+
+      <TraceConsole
+        title="Agent 决策轨迹"
+        subtitle={`${layeringDecision.trace.length} 步 · 同输入可复现 · 点击步骤定位树节点`}
+        technicalLabel="layering.trace"
+        variant="band"
+        collapsible
+        activeRefId={highlightedNodeId}
+        onStepClick={highlightTraceNode}
+        steps={layeringDecision.trace.map((step) => ({
+          index: step.step,
+          scope: TIER_LABELS[step.tier],
+          action: step.action,
+          value: step.allocatedUnits,
+          reason: `${step.nodeName} · ${step.reason}`,
+          refId: step.nodeId,
+        }))}
+        footer={(
+          <>
+            frontier Σ = {frontierAllocated} · supply = {layeringSupply}
+            {layeringDecision.supplyConserved ? " ✓" : ""}
+          </>
+        )}
+      />
     </div>
   );
 }

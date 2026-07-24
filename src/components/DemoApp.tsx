@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import {
   CalendarDays,
   GitCompareArrows,
@@ -17,6 +17,7 @@ import { DemoProvider, useDemo, type DemoView, type TriggerMode } from "@/src/st
 import { formatSimulationDate } from "@/src/mock/seed";
 import { SCENARIOS } from "@/src/core/scenarios";
 import { runtimeModeFromSearch } from "@/src/core/demoClock";
+import { parseShotPreset } from "@/src/core/shotPresets";
 import type { AllocationScenarioId } from "@/src/core/types";
 import { LayeringPage } from "@/src/components/pages/LayeringPage";
 import { WorkbenchPage } from "@/src/components/pages/WorkbenchPage";
@@ -25,6 +26,7 @@ import { RatiosPage } from "@/src/components/pages/RatiosPage";
 import { TurnoverPage } from "@/src/components/pages/TurnoverPage";
 import { ConsolePage } from "@/src/components/pages/ConsolePage";
 import { CalibrationModal } from "@/src/components/CalibrationModal";
+import { ShotLayoutGuard } from "@/src/components/ShotLayoutGuard";
 
 interface NavItem {
   id: DemoView;
@@ -59,6 +61,7 @@ function CurrentPage() {
 }
 
 function Shell() {
+  const pageScrollRef = useRef<HTMLElement>(null);
   const {
     view,
     setView,
@@ -90,10 +93,14 @@ function Shell() {
       delete document.documentElement.dataset.preset;
       return;
     }
-    const preset = query.get("preset") || "workbench-result";
+    const preset = parseShotPreset(query.get("preset"));
     document.documentElement.dataset.preset = preset;
     applyShotPreset(preset);
   }, [applyShotPreset, configureRuntimeMode]);
+
+  useEffect(() => {
+    pageScrollRef.current?.scrollTo({ top: 0, left: 0 });
+  }, [view]);
 
   const navigate = (next: DemoView) => {
     const transitionDocument = document as Document & {
@@ -108,6 +115,7 @@ function Shell() {
 
   return (
     <div className="app-shell" data-runtime-mode={runtimeMode}>
+      <ShotLayoutGuard />
       <aside className="sidebar">
         <div className="sidebar-brand">
           <img src="/logo.png" alt="4seeTech" />
@@ -236,7 +244,7 @@ function Shell() {
           </div>
         </header>
 
-        <main className="page-scroll corner-dots-bg">
+        <main ref={pageScrollRef} className="page-scroll corner-dots-bg">
           <CurrentPage />
         </main>
       </section>

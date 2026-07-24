@@ -39,6 +39,7 @@ import { LEARNING_HISTORY } from "@/src/mock/seed";
 import { useDemo, type FactorOverrides } from "@/src/store/DemoContext";
 import { DeferredResponsiveContainer } from "@/src/components/ui/DeferredResponsiveContainer";
 import { CardTitle, PageHeading, StatusPill } from "@/src/components/ui/Primitives";
+import { TraceConsole } from "@/src/components/ui/TraceConsole";
 
 const REPLAY_EVENTS = new Set<AllocationStep["event"]>([
   "PROPORTIONAL_FILL",
@@ -570,13 +571,26 @@ export function WorkbenchPage() {
                         {expanded && (
                           <tr key={`${result.dealerId}-audit`} className="audit-row">
                             <td colSpan={8}>
-                              <div className="audit-console">
-                                <div className="audit-title">分配轨迹 · {dealer?.name ?? result.dealerId}</div>
-                                {result.trace.map((step) => (
-                                  <div key={step.step}><span>#{String(step.step).padStart(2, "0")}</span><b>{PHASE_LABEL[step.phase]}</b><em>{EVENT_LABEL[step.event]}</em><strong>{step.deltaUnits > 0 ? `+${step.deltaUnits}` : "—"}</strong><p>{step.message}</p></div>
-                                ))}
-                                <div className="audit-total">Σ final = {allocation.totalAllocated} = supply {params.supply} ✓</div>
-                              </div>
+                              <TraceConsole
+                                title={`分配轨迹 · ${dealer?.name ?? result.dealerId}`}
+                                variant="row"
+                                steps={result.trace.map((step) => ({
+                                  index: step.step,
+                                  scope: PHASE_LABEL[step.phase],
+                                  action: EVENT_LABEL[step.event],
+                                  value:
+                                    step.deltaUnits > 0
+                                      ? `+${step.deltaUnits}`
+                                      : "—",
+                                  reason: step.message,
+                                }))}
+                                footer={(
+                                  <>
+                                    Σ final = {allocation.totalAllocated} =
+                                    supply {params.supply} ✓
+                                  </>
+                                )}
+                              />
                             </td>
                           </tr>
                         )}

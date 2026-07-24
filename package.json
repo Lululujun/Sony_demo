@@ -8,6 +8,7 @@
     "build": "next build",
     "start": "node scripts/serve-static.mjs out 4173",
     "preview": "node scripts/serve-static.mjs out 4173",
+    "check:shots": "node scripts/check-screenshot-presets.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit"

@@ -43,6 +43,10 @@ import {
   getScenarioSku,
   getScenarioSkuOptions,
 } from "@/src/core/scenarios";
+import {
+  SHOT_PRESET_INTENTS,
+  type ShotPresetId,
+} from "@/src/core/shotPresets";
 import { isSkipped, type ColorVariant } from "@/src/core/specialMaterials";
 import type {
   AllocationParams,
@@ -126,7 +130,7 @@ interface DemoContextValue {
   inventoryFactor: number;
   runtimeMode: DemoRuntimeMode;
   shotMode: boolean;
-  shotPreset: string;
+  shotPreset: ShotPresetId | "";
   toast: ToastMessage | null;
   updateParams: (patch: Partial<AllocationParams>) => void;
   updateDealer: (dealerId: string, patch: Partial<Dealer>) => void;
@@ -141,7 +145,7 @@ interface DemoContextValue {
   updateInventoryFactor: (value: number) => void;
   rollbackWeights: () => void;
   configureRuntimeMode: (mode: DemoRuntimeMode) => void;
-  applyShotPreset: (preset: string) => void;
+  applyShotPreset: (preset: ShotPresetId) => void;
   notify: (title: string, detail: string) => void;
   layeringScenario: LayeringScenario;
   setLayeringScenario: (scenario: LayeringScenario) => void;
@@ -316,7 +320,7 @@ export function DemoProvider({ children }: { children: ReactNode }) {
     useState<FactorOverrides>(DEFAULT_FACTORS);
   const [inventoryFactor, setInventoryFactor] = useState(1);
   const [runtimeMode, setRuntimeMode] = useState<DemoRuntimeMode>("normal");
-  const [shotPreset, setShotPreset] = useState("");
+  const [shotPreset, setShotPreset] = useState<ShotPresetId | "">("");
   const [toast, setToast] = useState<ToastMessage | null>(null);
   const [layeringScenario, setLayeringScenario] =
     useState<LayeringScenario>("p2");
@@ -905,26 +909,6 @@ export function DemoProvider({ children }: { children: ReactNode }) {
     setRuntimeMode(mode);
   }, []);
 
-  const applyShotPreset = useCallback((preset: string) => {
-    setRuntimeMode("shot");
-    setShotPreset(preset);
-    if (preset.startsWith("layering-")) {
-      setLayeringScenario(preset === "layering-p1" ? "p1" : "p2");
-      setView("layering");
-    } else if (preset.startsWith("ratios-")) {
-      setView("ratios");
-    } else if (preset.startsWith("console-")) {
-      setView("console");
-    } else if (preset.startsWith("turnover-") || preset === "calibration") {
-      setView("turnover");
-      setCalibrationOpen(preset === "calibration");
-    } else if (preset === "scenarios") {
-      setView("scenarios");
-    } else {
-      setView("workbench");
-    }
-  }, []);
-
   const resetDemo = useCallback(() => {
     const scenario = getScenario("ppt");
     const profile = getScenarioSku("ppt", scenario.sku);
@@ -952,6 +936,19 @@ export function DemoProvider({ children }: { children: ReactNode }) {
     setDrillDownTarget(null);
     notify("演示已重置", "已恢复固定数据快照与全部 RFP 配置基线。");
   }, [notify]);
+
+  const applyShotPreset = useCallback(
+    (preset: ShotPresetId) => {
+      const intent = SHOT_PRESET_INTENTS[preset];
+      resetDemo();
+      setRuntimeMode("shot");
+      setShotPreset(preset);
+      setCalibrationOpen(Boolean(intent.calibrationOpen));
+      setLayeringScenario(intent.layeringScenario ?? "p2");
+      setView(intent.view);
+    },
+    [resetDemo],
+  );
 
   const value: DemoContextValue = {
     view,

@@ -83,10 +83,11 @@ Demo 使用本地固定 seed 模拟这些输入。正式项目中只需用接口
 pnpm typecheck
 pnpm test
 pnpm build
+pnpm run check:shots
 pnpm preview
 ```
 
-`pnpm build` 使用 Next.js 静态导出生成 `out/`。产物不需要 Node.js 服务端、数据库、SAP 或 LLM，可断网演示，也可直接部署到静态托管平台。
+`pnpm build` 使用 Next.js 静态导出生成 `out/`。`pnpm run check:shots` 会使用本机 Edge/Chrome 自动验证 9 个截图 preset 在 1280×720 与 1920×1080 下的布局。产物不需要 Node.js 服务端、数据库、SAP 或 LLM，可断网演示，也可直接部署到静态托管平台。
 
 ## Cloudflare Pages
 
