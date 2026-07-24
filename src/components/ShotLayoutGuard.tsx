@@ -31,6 +31,7 @@ const CRITICAL_SELECTORS: Record<ShotPresetId, readonly string[]> = {
     "[data-testid='ratio-section-rules']",
     "[data-testid='ratio-section-special']",
     "[data-testid='color-model-check']",
+    ".ratio-trace-band",
   ],
   "turnover-psi": [
     ".turnover-metric-strip",

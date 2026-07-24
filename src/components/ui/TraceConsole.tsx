@@ -1,12 +1,20 @@
 "use client";
 
 import {
+  useCallback,
   useEffect,
+  useMemo,
   useRef,
   useState,
+  type KeyboardEvent as ReactKeyboardEvent,
   type ReactNode,
 } from "react";
-import { ChevronDown, ChevronUp } from "lucide-react";
+import {
+  ChevronDown,
+  ChevronLeft,
+  ChevronRight,
+  ChevronUp,
+} from "lucide-react";
 
 export type TraceVariant = "row" | "band";
 
@@ -29,6 +37,8 @@ export interface TraceConsoleProps {
   defaultCollapsed?: boolean;
   activeRefId?: string | null;
   onStepClick?: (refId: string) => void;
+  onStepSelect?: (step: TraceStep) => void;
+  visibleSteps?: readonly number[];
   footer?: ReactNode;
   className?: string;
 }
@@ -40,6 +50,34 @@ export function traceVariantNeedsWidthWarning(
   width: number,
 ): boolean {
   return variant === "row" && width < TRACE_ROW_MIN_WIDTH;
+}
+
+export function calculateTraceRevealDelta(
+  trackLeft: number,
+  trackRight: number,
+  stepLeft: number,
+  stepRight: number,
+  padding = 24,
+): number {
+  if (stepLeft < trackLeft + padding) {
+    return stepLeft - trackLeft - padding;
+  }
+  if (stepRight > trackRight - padding) {
+    return stepRight - trackRight + padding;
+  }
+  return 0;
+}
+
+export function calculateTraceEdges(
+  scrollLeft: number,
+  scrollWidth: number,
+  clientWidth: number,
+): { left: boolean; right: boolean } {
+  const max = Math.max(0, scrollWidth - clientWidth);
+  return {
+    left: scrollLeft > 1,
+    right: scrollLeft < max - 1,
+  };
 }
 
 function actionTone(action: string): string {
@@ -57,14 +95,37 @@ export function TraceConsole({
   variant,
   collapsible = false,
   defaultCollapsed = false,
-  activeRefId = null,
+  activeRefId,
   onStepClick,
+  onStepSelect,
+  visibleSteps,
   footer,
   className = "",
 }: TraceConsoleProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const trackRef = useRef<HTMLDivElement>(null);
+  const stepRefs = useRef<Map<number, HTMLButtonElement>>(new Map());
   const warnedForWidth = useRef(false);
+  const prefersReduced = useRef(false);
   const [collapsed, setCollapsed] = useState(defaultCollapsed);
+  const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const [edges, setEdges] = useState({ left: false, right: false });
+
+  const displayedSteps = useMemo(() => {
+    if (!visibleSteps) return steps;
+    const visible = new Set(visibleSteps);
+    return steps.filter((_, index) => visible.has(index));
+  }, [steps, visibleSteps]);
+
+  useEffect(() => {
+    const media = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const syncPreference = () => {
+      prefersReduced.current = media.matches;
+    };
+    syncPreference();
+    media.addEventListener?.("change", syncPreference);
+    return () => media.removeEventListener?.("change", syncPreference);
+  }, []);
 
   useEffect(() => {
     if (
@@ -97,6 +158,159 @@ export function TraceConsole({
     return () => observer.disconnect();
   }, [variant]);
 
+  const syncEdges = useCallback(() => {
+    const track = trackRef.current;
+    if (!track) return;
+    const next = calculateTraceEdges(
+      track.scrollLeft,
+      track.scrollWidth,
+      track.clientWidth,
+    );
+    setEdges((current) =>
+      current.left === next.left && current.right === next.right
+        ? current
+        : next,
+    );
+  }, []);
+
+  const revealStep = useCallback((index: number) => {
+    const track = trackRef.current;
+    const element = stepRefs.current.get(index);
+    if (!track || !element) return;
+
+    const trackRect = track.getBoundingClientRect();
+    const elementRect = element.getBoundingClientRect();
+    const delta = calculateTraceRevealDelta(
+      trackRect.left,
+      trackRect.right,
+      elementRect.left,
+      elementRect.right,
+    );
+    if (delta === 0) return;
+
+    track.scrollBy({
+      left: delta,
+      behavior: prefersReduced.current ? "auto" : "smooth",
+    });
+  }, []);
+
+  const selectStep = useCallback(
+    (index: number) => {
+      const step = displayedSteps[index];
+      if (!step) return;
+      setActiveIndex(index);
+      revealStep(index);
+      onStepSelect?.(step);
+      if (step.refId) onStepClick?.(step.refId);
+    },
+    [displayedSteps, onStepClick, onStepSelect, revealStep],
+  );
+
+  useEffect(() => {
+    if (activeRefId === undefined) return;
+    if (activeRefId === null) {
+      setActiveIndex(null);
+      return;
+    }
+    const index = displayedSteps.findIndex(
+      (step) => step.refId === activeRefId,
+    );
+    setActiveIndex(index >= 0 ? index : null);
+    if (index >= 0) {
+      const frame = window.requestAnimationFrame(() => revealStep(index));
+      return () => window.cancelAnimationFrame(frame);
+    }
+  }, [activeRefId, displayedSteps, revealStep]);
+
+  useEffect(() => {
+    if (collapsed) {
+      setEdges({ left: false, right: false });
+      return;
+    }
+    const track = trackRef.current;
+    if (!track) return;
+
+    const frame = window.requestAnimationFrame(syncEdges);
+    track.addEventListener("scroll", syncEdges, { passive: true });
+    const observer =
+      typeof ResizeObserver === "undefined"
+        ? null
+        : new ResizeObserver(syncEdges);
+    observer?.observe(track);
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+      track.removeEventListener("scroll", syncEdges);
+      observer?.disconnect();
+    };
+  }, [collapsed, displayedSteps.length, syncEdges]);
+
+  useEffect(() => {
+    if (collapsed || activeIndex === null) return;
+    const frame = window.requestAnimationFrame(() => revealStep(activeIndex));
+    return () => window.cancelAnimationFrame(frame);
+  }, [activeIndex, collapsed, revealStep]);
+
+  useEffect(() => {
+    if (collapsed) return;
+    const track = trackRef.current;
+    if (!track) return;
+
+    const handleWheel = (event: WheelEvent) => {
+      if (
+        event.deltaY === 0 ||
+        Math.abs(event.deltaX) > Math.abs(event.deltaY)
+      ) {
+        return;
+      }
+      const max = track.scrollWidth - track.clientWidth;
+      if (max <= 0) return;
+
+      const atStart = track.scrollLeft <= 1;
+      const atEnd = track.scrollLeft >= max - 1;
+      if (
+        (event.deltaY < 0 && atStart) ||
+        (event.deltaY > 0 && atEnd)
+      ) {
+        return;
+      }
+
+      event.preventDefault();
+      track.scrollLeft += event.deltaY;
+    };
+
+    track.addEventListener("wheel", handleWheel, { passive: false });
+    return () => track.removeEventListener("wheel", handleWheel);
+  }, [collapsed, displayedSteps.length]);
+
+  const scrollByPage = (direction: 1 | -1) => {
+    const track = trackRef.current;
+    if (!track) return;
+    track.scrollBy({
+      left: direction * track.clientWidth * 0.8,
+      behavior: prefersReduced.current ? "auto" : "smooth",
+    });
+  };
+
+  const handleTrackKeyDown = (
+    event: ReactKeyboardEvent<HTMLDivElement>,
+  ) => {
+    const last = displayedSteps.length - 1;
+    if (last < 0) return;
+    const current = activeIndex ?? 0;
+    let next: number | null = null;
+
+    if (event.key === "ArrowRight") next = Math.min(current + 1, last);
+    else if (event.key === "ArrowLeft") next = Math.max(current - 1, 0);
+    else if (event.key === "Home") next = 0;
+    else if (event.key === "End") next = last;
+    else return;
+
+    event.preventDefault();
+    selectStep(next);
+    stepRefs.current.get(next)?.focus({ preventScroll: true });
+  };
+
   if (variant === "row") {
     return (
       <div
@@ -125,6 +339,7 @@ export function TraceConsole({
     <div
       ref={containerRef}
       role="region"
+      aria-label={title}
       className={`card trace-console trace-console--band ${collapsed ? "collapsed" : ""} ${className}`.trim()}
       data-testid="trace-console-band"
     >
@@ -133,17 +348,50 @@ export function TraceConsole({
           <h2>{title}</h2>
           {subtitle && <p>{subtitle}</p>}
         </div>
-        {collapsible && (
-          <button
-            type="button"
-            className="button ghost trace-console-toggle"
-            onClick={() => setCollapsed((current) => !current)}
-            aria-expanded={!collapsed}
-          >
-            {collapsed ? <ChevronDown size={15} /> : <ChevronUp size={15} />}
-            {collapsed ? "展开" : "收起"}
-          </button>
-        )}
+        <div className="trace-console-header-actions">
+          {!collapsed && displayedSteps.length > 0 && (
+            <div
+              className="trace-console-navigation"
+              aria-label="轨迹步骤导航"
+            >
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => scrollByPage(-1)}
+                disabled={!edges.left}
+                aria-label="上一组步骤"
+              >
+                <ChevronLeft size={14} />
+              </button>
+              <span className="trace-counter" aria-live="polite">
+                {activeIndex === null
+                  ? "—"
+                  : `#${String(displayedSteps[activeIndex]?.index ?? activeIndex + 1).padStart(2, "0")}`}{" "}
+                / {steps.length}
+              </span>
+              <button
+                type="button"
+                className="icon-button"
+                onClick={() => scrollByPage(1)}
+                disabled={!edges.right}
+                aria-label="下一组步骤"
+              >
+                <ChevronRight size={14} />
+              </button>
+            </div>
+          )}
+          {collapsible && (
+            <button
+              type="button"
+              className="button ghost trace-console-toggle"
+              onClick={() => setCollapsed((current) => !current)}
+              aria-expanded={!collapsed}
+            >
+              {collapsed ? <ChevronDown size={15} /> : <ChevronUp size={15} />}
+              {collapsed ? "展开" : "收起"}
+            </button>
+          )}
+        </div>
       </header>
 
       {!collapsed && (
@@ -151,8 +399,18 @@ export function TraceConsole({
           {technicalLabel && (
             <div className="trace-console-technical">{technicalLabel}</div>
           )}
-          <div className="trace-console-band-track">
-            {steps.map((step) => {
+          <div
+            className="trace-console-band-scroll-shell"
+            data-edge-left={edges.left}
+            data-edge-right={edges.right}
+          >
+            <div
+              ref={trackRef}
+              className="trace-console-band-track"
+              onKeyDown={handleTrackKeyDown}
+              aria-label={`${title}步骤`}
+            >
+            {displayedSteps.map((step, index) => {
               const content = (
                 <>
                   <span className="trace-step-kicker">
@@ -167,29 +425,35 @@ export function TraceConsole({
                 </>
               );
               const active = Boolean(
-                step.refId && activeRefId && step.refId === activeRefId,
+                activeIndex === index,
               );
 
-              return onStepClick && step.refId ? (
+              return (
                 <button
+                  ref={(element) => {
+                    if (element) stepRefs.current.set(index, element);
+                    else stepRefs.current.delete(index);
+                  }}
                   type="button"
-                  key={`${step.index}-${step.refId}`}
-                  data-testid={`trace-step-${step.refId}`}
+                  role="button"
+                  tabIndex={
+                    activeIndex === index ||
+                    (activeIndex === null && index === 0)
+                      ? 0
+                      : -1
+                  }
+                  key={`${step.index}-${step.refId ?? step.reason}`}
+                  data-testid={`trace-step-${step.refId ?? step.index}`}
                   className={`trace-step-card interactive ${active ? "active" : ""}`}
-                  onClick={() => onStepClick(step.refId as string)}
-                  aria-pressed={active}
+                  onClick={() => selectStep(index)}
+                  aria-current={active ? "step" : undefined}
+                  aria-label={`步骤 ${step.index}，${step.scope}，${step.action}`}
                 >
                   {content}
                 </button>
-              ) : (
-                <article
-                  key={`${step.index}-${step.refId ?? step.reason}`}
-                  className="trace-step-card"
-                >
-                  {content}
-                </article>
               );
             })}
+            </div>
           </div>
           {footer && <div className="trace-console-band-total">{footer}</div>}
         </div>

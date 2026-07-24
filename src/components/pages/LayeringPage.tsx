@@ -3,6 +3,7 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
 } from "react";
@@ -23,7 +24,10 @@ import {
   PageHeading,
   StatusPill,
 } from "@/src/components/ui/Primitives";
-import { TraceConsole } from "@/src/components/ui/TraceConsole";
+import {
+  calculateTraceRevealDelta,
+  TraceConsole,
+} from "@/src/components/ui/TraceConsole";
 
 const TIER_ORDER: TierId[] = [
   "hq",
@@ -79,6 +83,7 @@ function selectCandidate(
 }
 
 export function LayeringPage() {
+  const layeringTreeScrollRef = useRef<HTMLDivElement>(null);
   const {
     layeringScenario,
     setLayeringScenario,
@@ -185,10 +190,25 @@ export function LayeringPage() {
     setSelectedPath(nextPath);
     setHighlightedNodeId(nodeId);
     requestAnimationFrame(() => {
-      document.getElementById(`layer-node-${nodeId}`)?.scrollIntoView({
-        behavior: "smooth",
-        block: "nearest",
-        inline: "center",
+      const track = layeringTreeScrollRef.current;
+      const target = document.getElementById(`layer-node-${nodeId}`);
+      if (!track || !target) return;
+      const trackRect = track.getBoundingClientRect();
+      const targetRect = target.getBoundingClientRect();
+      const delta = calculateTraceRevealDelta(
+        trackRect.left,
+        trackRect.right,
+        targetRect.left,
+        targetRect.right,
+        16,
+      );
+      if (delta === 0) return;
+      track.scrollBy({
+        left: delta,
+        behavior: window.matchMedia("(prefers-reduced-motion: reduce)")
+          .matches
+          ? "auto"
+          : "smooth",
       });
     });
   };
@@ -310,7 +330,7 @@ export function LayeringPage() {
             )}
           />
 
-          <div className="layering-tree-scroll">
+          <div ref={layeringTreeScrollRef} className="layering-tree-scroll">
             <div className="layering-tree" aria-label="六层组织停靠决策树">
               {TIER_ORDER.map((tier, tierIndex) => {
                 const nodes = levels.get(tier) ?? [];
@@ -412,6 +432,13 @@ export function LayeringPage() {
         collapsible
         activeRefId={highlightedNodeId}
         onStepClick={highlightTraceNode}
+        visibleSteps={
+          shotPreset === "layering-p1"
+            ? [0]
+            : shotPreset === "layering-p2"
+              ? [0, 1, 2, 3]
+              : undefined
+        }
         steps={layeringDecision.trace.map((step) => ({
           index: step.step,
           scope: TIER_LABELS[step.tier],

@@ -33,7 +33,10 @@ import {
   PageHeading,
   StatusPill,
 } from "@/src/components/ui/Primitives";
-import { TraceConsole } from "@/src/components/ui/TraceConsole";
+import {
+  TraceConsole,
+  type TraceStep,
+} from "@/src/components/ui/TraceConsole";
 
 interface RfpDealer extends Dealer {
   monthlyTarget?: number;
@@ -78,6 +81,9 @@ export function RatiosPage() {
     dealers[0]?.id ?? "",
   );
   const [skipDraft, setSkipDraft] = useState("");
+  const [activeRatioTraceRef, setActiveRatioTraceRef] = useState<
+    string | null
+  >(null);
 
   useEffect(() => {
     if (!dealers.some((dealer) => dealer.id === selectedDealerId)) {
@@ -172,6 +178,67 @@ export function RatiosPage() {
         bufferRatio: ratioConfig.bufferRatio,
       }),
     [directDemand, params.supply, ratioConfig.bufferRatio],
+  );
+  const ratioTraceSteps = useMemo<TraceStep[]>(
+    () => [
+      {
+        index: 1,
+        scope: "供需态势",
+        action: "SCORE",
+        value: paPlan.breakdown.supplyDemand.toFixed(3),
+        reason: paPlan.trace[0] ?? "",
+        refId: "supplyDemand",
+      },
+      {
+        index: 2,
+        scope: "经营状态",
+        action: "SCORE",
+        value: paPlan.breakdown.operation.toFixed(3),
+        reason: paPlan.trace[1] ?? "",
+        refId: "operation",
+      },
+      {
+        index: 3,
+        scope: "策略配置",
+        action: "SCORE",
+        value: paPlan.breakdown.strategy.toFixed(3),
+        reason: paPlan.trace[2] ?? "",
+        refId: "strategy",
+      },
+      {
+        index: 4,
+        scope: "三维合成",
+        action: "SCORE",
+        value: paPlan.ratio.toFixed(3),
+        reason: paPlan.trace[3] ?? "",
+        refId: "ratio",
+      },
+      {
+        index: 5,
+        scope: "直营优先",
+        action: "ALLOC",
+        value: channelSequence.directAllocated,
+        reason: channelSequence.trace[0] ?? "",
+        refId: "direct",
+      },
+      {
+        index: 6,
+        scope: "预留 Buffer",
+        action: "ALLOC",
+        value: channelSequence.bufferReserved,
+        reason: channelSequence.trace[1] ?? "",
+        refId: "buffer",
+      },
+      {
+        index: 7,
+        scope: "其他渠道池",
+        action: "ALLOC",
+        value: channelSequence.otherChannelsPool,
+        reason: channelSequence.trace[2] ?? "",
+        refId: "otherChannels",
+      },
+    ],
+    [channelSequence, paPlan],
   );
 
   const modelTotalTarget = colorVariants.reduce(
@@ -269,7 +336,20 @@ export function RatiosPage() {
           <div className="ratio-flow" aria-label="PA Plan Ratio 三维度合成">
             {dimensions.map((dimension, index) => (
               <div className="ratio-flow-fragment" key={dimension.key}>
-                <article className={`ratio-dimension ${dimension.key}`}>
+                <article
+                  className={[
+                    "ratio-dimension",
+                    dimension.key,
+                    activeRatioTraceRef === dimension.key
+                      ? "trace-highlight"
+                      : "",
+                  ].filter(Boolean).join(" ")}
+                  aria-current={
+                    activeRatioTraceRef === dimension.key
+                      ? "step"
+                      : undefined
+                  }
+                >
                   <div>
                     <strong>{dimension.label}</strong>
                     <span>{dimension.detail}</span>
@@ -288,7 +368,12 @@ export function RatiosPage() {
               </div>
             ))}
             <ArrowRight size={19} aria-hidden="true" />
-            <div className="ratio-result-node">
+            <div
+              className={`ratio-result-node ${activeRatioTraceRef === "ratio" ? "trace-highlight" : ""}`}
+              aria-current={
+                activeRatioTraceRef === "ratio" ? "step" : undefined
+              }
+            >
               <span>PA Plan Ratio</span>
               <strong>{paPlan.ratio.toFixed(3)}</strong>
               <small>v{ratioConfig.version}</small>
@@ -681,21 +766,19 @@ export function RatiosPage() {
 
       <TraceConsole
         title="计算轨迹"
-        subtitle="每个得分均可解释、可复现"
+        subtitle="每个得分均可解释、可复现 · 点击步骤定位对应分项"
         technicalLabel="pa_plan_ratio.trace"
         variant="band"
         collapsible
-        defaultCollapsed
         className="ratio-trace-band"
-        steps={[...paPlan.trace, ...channelSequence.trace].map(
-          (message, index) => ({
-            index: index + 1,
-            scope: index < paPlan.trace.length ? "比例" : "顺序",
-            action: index < paPlan.trace.length ? "SCORE" : "ALLOC",
-            value: "—",
-            reason: message,
-          }),
-        )}
+        steps={ratioTraceSteps}
+        activeRefId={activeRatioTraceRef}
+        onStepSelect={(step) => {
+          setActiveRatioTraceRef(step.refId ?? null);
+        }}
+        visibleSteps={
+          shotPreset === "ratios-special" ? [0, 1, 2, 3] : undefined
+        }
         footer={(
           <>
             ratio = {paPlan.ratio.toFixed(4)} · allocation Σ ={" "}
